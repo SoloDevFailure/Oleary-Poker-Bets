@@ -153,7 +153,7 @@ h3 {
   top: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 0.4rem;
   border-bottom: 1px solid var(--line);
   background: rgba(245, 242, 235, 0.96);
@@ -214,6 +214,12 @@ h3 {
 
 .session-panel {
   display: block;
+}
+
+.session-actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
 }
 
 .panel {
@@ -281,6 +287,14 @@ h3 {
 
 .bonus-fields {
   grid-template-columns: minmax(0, 1fr) 140px;
+}
+
+.bonus-resolve {
+  border: 1px solid #bdd8f5;
+  border-radius: 7px;
+  background: #eef6ff;
+  color: #155a9c;
+  padding: 0.7rem;
 }
 
 .checkbox-row {
@@ -455,6 +469,11 @@ h3 {
   color: #33424a;
 }
 
+.pill.bonus-pill {
+  background: #dcecff;
+  color: #155a9c;
+}
+
 .event-card {
   overflow: hidden;
 }
@@ -531,6 +550,36 @@ h3 {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.market-summary-grid {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.market-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-radius: 7px;
+  background: #faf5eb;
+  padding: 0.6rem;
+}
+
+.odds-menu {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: 0.75rem;
+}
+
+.odds-menu summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.odds-menu .odds-grid {
+  margin-top: 0.65rem;
 }
 
 .arrow-button {

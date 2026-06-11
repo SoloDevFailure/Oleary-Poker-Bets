@@ -42,8 +42,11 @@ const els = {
   betDialogTemplate: document.querySelector("#betDialogTemplate"),
   playersTab: document.querySelector("#playersTab"),
   eventsTab: document.querySelector("#eventsTab"),
+  sessionTab: document.querySelector("#sessionTab"),
   playersPanel: document.querySelector("#playersPanel"),
   eventsPanel: document.querySelector("#eventsPanel"),
+  sessionPanel: document.querySelector("#sessionPanel"),
+  closeAllBetting: document.querySelector("#closeAllBetting"),
   syncStatus: document.querySelector("#syncStatus"),
   syncNow: document.querySelector("#syncNow"),
   confirmDialog: document.querySelector("#confirmDialog"),
@@ -336,6 +339,7 @@ async function loadRemoteState() {
       taxRate: Number(market.tax_rate),
       bonusPoints: Number(market.bonus_points),
       bonusLabel: market.bonus_label,
+      bonusAwarded: Boolean(market.winning_selection?.bonus_awarded),
       winningOutcome,
       createdAt: market.created_at,
       resolvedAt: market.resolved_at,
@@ -420,6 +424,7 @@ async function saveRemoteMarket(event) {
     locked_at: event.status === "locked" && !event.lockedAt ? new Date().toISOString() : event.lockedAt || null,
     resolved_at: event.status === "resolved" ? event.resolvedAt || new Date().toISOString() : null,
     voided_at: event.status === "voided" ? event.voidedAt || new Date().toISOString() : null,
+    winning_selection: event.bonusAwarded ? { bonus_awarded: true } : event.status === "resolved" ? { bonus_awarded: false } : null,
   };
 
   if (event.winningOutcome && event.status === "resolved") {
@@ -679,11 +684,15 @@ function render() {
 }
 
 function renderTabs() {
+  const showSession = activeTab === "session";
   const showPlayers = activeTab === "players";
+  const showEvents = activeTab === "events";
+  els.sessionTab.classList.toggle("active", showSession);
   els.playersTab.classList.toggle("active", showPlayers);
-  els.eventsTab.classList.toggle("active", !showPlayers);
+  els.eventsTab.classList.toggle("active", showEvents);
+  els.sessionPanel.classList.toggle("active", showSession);
   els.playersPanel.classList.toggle("active", showPlayers);
-  els.eventsPanel.classList.toggle("active", !showPlayers);
+  els.eventsPanel.classList.toggle("active", showEvents);
 }
 
 function renderPlayers() {
@@ -800,8 +809,8 @@ function renderEvent(event) {
   const statusText = event.status.charAt(0).toUpperCase() + event.status.slice(1);
   const canCollapse = event.status === "resolved" || event.status === "voided";
   const isCollapsed = canCollapse && collapsedEvents.has(event.id);
-  const playerRows = state.players.map((player) => renderBetRow(event, player)).join("");
-  const oddsRows = renderOdds(event);
+  const marketSummary = renderMarketSummary(event);
+  const oddsMenu = renderMarketOddsMenu(event);
   const outcomePicker = renderOutcomePicker(event);
 
   if (isCollapsed) {
@@ -828,26 +837,57 @@ function renderEvent(event) {
           <div class="event-meta">
             <h3>${escapeHtml(event.name)}</h3>
             <span class="pill ${event.status}">${statusText}</span>
+            ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus points available</span>' : ""}
           </div>
           <p class="muted">Pool: ${money(pool)} · Tax: ${money(pool * TAX_RATE)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
+          ${event.bonusPoints > 0 ? `<p class="muted">Bonus: <strong>${money(event.bonusPoints)}</strong> points · ${escapeHtml(event.bonusLabel || "Host-triggered bonus")}</p>` : ""}
         </div>
         <div class="event-actions">
           ${canCollapse ? `<button class="ghost arrow-button" data-toggle-event="${event.id}" aria-label="Minimize event">^</button>` : ""}
+          <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
           ${event.status === "open" ? `<button data-close-event="${event.id}">Close Betting</button>` : ""}
           ${event.status === "locked" ? outcomePicker : ""}
           <button class="ghost" data-remove-event="${event.id}">Remove</button>
         </div>
       </div>
       <div class="event-body">
-        <div>
-          <h3>Bets</h3>
-          <div class="bet-grid">${playerRows || '<div class="empty">Add players before taking bets.</div>'}</div>
-        </div>
-        ${event.status !== "open" ? `<div><h3>Odds</h3><div class="odds-grid">${oddsRows}</div></div>` : ""}
+        ${marketSummary}
+        ${oddsMenu}
         ${event.status === "resolved" ? `<p class="muted">Winning outcome: <strong>${escapeHtml(event.winningOutcome)}</strong></p>` : ""}
         ${event.status === "resolved" ? `<button class="danger undo-button" data-undo-payout="${event.id}">Undo Last Payout</button>` : ""}
       </div>
     </article>
+  `;
+}
+
+function renderMarketSummary(event) {
+  const totals = getOutcomeTotals(event);
+  const outcomes = getEventOutcomes(event);
+  if (outcomes.length === 0) {
+    return '<div class="empty">No outcomes available.</div>';
+  }
+
+  return `
+    <div>
+      <h3>Backed Outcomes</h3>
+      <div class="market-summary-grid">
+        ${outcomes.map((outcome) => `
+          <div class="market-summary-row">
+            <strong>${escapeHtml(outcome)}</strong>
+            <span>${money(totals[outcome] || 0)} backed</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderMarketOddsMenu(event) {
+  return `
+    <details class="odds-menu" open>
+      <summary>Available outcomes and odds</summary>
+      <div class="odds-grid">${renderOdds(event)}</div>
+    </details>
   `;
 }
 
@@ -897,17 +937,18 @@ function renderBetRow(event, player) {
 }
 
 function renderOdds(event) {
-  const odds = getOdds(event);
-  if (odds.length === 0) {
-    return '<div class="empty">No bets were placed.</div>';
-  }
+  const oddsByOutcome = new Map(getOdds(event).map((item) => [item.outcome, item]));
+  const outcomes = getEventOutcomes(event);
+  if (outcomes.length === 0) return '<div class="empty">No outcomes available.</div>';
 
-  return odds.map((item) => {
-    const displayOdds = formatOdds(item.profitPerPoint);
+  return outcomes.map((outcome) => {
+    const item = oddsByOutcome.get(outcome);
+    const displayOdds = item ? formatOdds(item.profitPerPoint) : "No bets yet";
+    const backed = item ? item.total : 0;
     return `
       <div class="odds-row">
         <div class="odds-main">
-          <strong>${escapeHtml(item.outcome)}</strong>
+          <strong>${escapeHtml(outcome)}</strong>
           <span class="muted">Option</span>
         </div>
         <div class="odds-stat">
@@ -915,7 +956,7 @@ function renderOdds(event) {
           <span class="muted">Odds</span>
         </div>
         <div class="odds-stat">
-          <strong>${money(item.total)}</strong>
+          <strong>${money(backed)}</strong>
           <span class="muted">Backed</span>
         </div>
       </div>
@@ -925,6 +966,14 @@ function renderOdds(event) {
 
 function renderOutcomePicker(event) {
   const outcomes = getEventOutcomes(event);
+  const bonusControl = event.bonusPoints > 0
+    ? `
+      <label class="checkbox-row bonus-resolve">
+        <input data-bonus-awarded="${event.id}" type="checkbox" />
+        Include bonus: ${money(event.bonusPoints)} pts · ${escapeHtml(event.bonusLabel || "Host-triggered bonus")}
+      </label>
+    `
+    : "";
 
   return `
     <select data-outcome-select="${event.id}" aria-label="Winning outcome">
@@ -932,6 +981,7 @@ function renderOutcomePicker(event) {
       ${outcomes.map((outcome) => `<option value="${escapeAttr(outcome)}">${escapeHtml(outcome)}</option>`).join("")}
     </select>
     <input data-custom-outcome="${event.id}" type="text" placeholder="Or type unbacked outcome" aria-label="Unbacked outcome" />
+    ${bonusControl}
     <button data-resolve-event="${event.id}">Confirm Payout</button>
     <button class="ghost" data-void-event="${event.id}">Void / Refund</button>
   `;
@@ -1048,16 +1098,54 @@ async function closeEvent(eventId) {
   });
 }
 
+async function closeAllBetting() {
+  const openMarkets = state.events.filter((event) => event.status === "open");
+  if (openMarkets.length === 0) {
+    await askConfirm({
+      title: "No open markets",
+      message: "There are no open markets to close.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  const confirmed = await askConfirm({
+    title: "Close all betting?",
+    message: `Close betting on ${openMarkets.length} open market${openMarkets.length === 1 ? "" : "s"}? Stakes will be locked.`,
+    action: "Close all",
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  openMarkets.forEach((market) => {
+    market.bets.forEach((bet) => {
+      const player = state.players.find((item) => item.id === bet.playerId);
+      if (player) player.points -= bet.value;
+    });
+    market.status = "locked";
+    market.lockedAt = new Date().toISOString();
+  });
+
+  render();
+  await runRemote(async () => {
+    await Promise.all(openMarkets.flatMap((market) => market.bets.map((bet) => saveRemoteBet(market, bet))));
+    await Promise.all(state.players.map((player) => saveRemotePlayer(player)));
+    await Promise.all(openMarkets.map((market) => saveRemoteMarket(market)));
+  });
+}
+
 async function resolveEvent(eventId) {
   const event = state.events.find((item) => item.id === eventId);
   const select = document.querySelector(`[data-outcome-select="${eventId}"]`);
   const customOutcome = document.querySelector(`[data-custom-outcome="${eventId}"]`)?.value.trim();
+  const bonusAwarded = Boolean(document.querySelector(`[data-bonus-awarded="${eventId}"]`)?.checked);
   const winningOutcome = customOutcome || select?.value;
   if (!event || event.status !== "locked" || !winningOutcome) return;
 
   const confirmed = await askConfirm({
     title: "Confirm payout",
-    message: `Apply payouts for "${event.name}" with "${winningOutcome}" as the outcome?`,
+    message: `Apply payouts for "${event.name}" with "${winningOutcome}" as the outcome?${bonusAwarded ? ` Bonus included: ${money(event.bonusPoints)} points.` : ""}`,
     action: "Apply payouts",
   });
   if (!confirmed) return;
@@ -1072,7 +1160,8 @@ async function resolveEvent(eventId) {
   event.bets.forEach((bet) => {
     if (bet.outcome !== winningOutcome || winnerTotal <= 0) return;
     const player = state.players.find((item) => item.id === bet.playerId);
-    const amount = (bet.value / winnerTotal) * taxedPool;
+    const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * (bet.value / winnerTotal) : 0;
+    const amount = (bet.value / winnerTotal) * taxedPool + bonusAmount;
     if (player) {
       player.points += amount;
       payouts.push({ playerId: player.id, amount });
@@ -1082,6 +1171,7 @@ async function resolveEvent(eventId) {
   event.status = "resolved";
   event.winningOutcome = winningOutcome;
   event.payouts = payouts;
+  event.bonusAwarded = bonusAwarded;
   event.resolvedAt = new Date().toISOString();
   collapsedEvents.add(event.id);
   saveCollapsedEvents();
@@ -1410,6 +1500,7 @@ document.addEventListener("click", (event) => {
   const removePlayerButton = event.target.closest("[data-remove-player]");
   const removeEventButton = event.target.closest("[data-remove-event]");
   const removeOutcomeButton = event.target.closest("[data-remove-outcome]");
+  const refreshMarketButton = event.target.closest("[data-refresh-market]");
 
   if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId);
   if (closeButton) closeEvent(closeButton.dataset.closeEvent);
@@ -1422,12 +1513,39 @@ document.addEventListener("click", (event) => {
   if (penaltyButton) adjustPlayer(penaltyButton.dataset.addPenalty, "penalty");
   if (removePlayerButton) removePlayer(removePlayerButton.dataset.removePlayer);
   if (removeEventButton) removeEvent(removeEventButton.dataset.removeEvent);
+  if (refreshMarketButton) refreshMarketButtonState(refreshMarketButton);
   if (removeOutcomeButton) {
     const labels = Array.from(document.querySelectorAll("[data-outcome-field]")).map((input) => input.value);
     labels.splice(Number(removeOutcomeButton.dataset.removeOutcome), 1);
     renderOutcomeFields(labels);
   }
 });
+
+async function refreshMarketButtonState(button) {
+  if (!remoteReady()) {
+    await askConfirm({
+      title: "Supabase not ready",
+      message: "Connect to the shared session before refreshing market odds.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  button.disabled = true;
+  const originalText = button.textContent;
+  button.textContent = "Refreshing...";
+  try {
+    await loadRemoteState();
+    setSyncStatus(`Supabase synced · Session ${remote.session.join_code}`, "online");
+  } catch (error) {
+    console.error("Market refresh failed", error);
+    setSyncStatus(`Refresh error: ${shortError(error)}`, "offline");
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
 
 els.addOutcome.addEventListener("click", () => {
   const labels = Array.from(document.querySelectorAll("[data-outcome-field]")).map((input) => input.value);
@@ -1441,6 +1559,8 @@ els.bonusEnabled.addEventListener("change", () => {
     els.bonusLabel.focus();
   }
 });
+
+els.closeAllBetting.addEventListener("click", closeAllBetting);
 
 els.exportData.addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });

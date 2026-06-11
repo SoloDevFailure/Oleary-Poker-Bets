@@ -32,12 +32,13 @@
       </header>
 
       <nav class="tabs" aria-label="Main views">
+        <button id="sessionTab" class="tab" type="button" data-tab="session">Session</button>
         <button id="playersTab" class="tab active" type="button" data-tab="players">Players</button>
         <button id="eventsTab" class="tab" type="button" data-tab="events">Markets</button>
       </nav>
 
       <main class="layout">
-        <section id="sessionPanel" class="panel session-panel">
+        <section id="sessionPanel" class="panel session-panel tab-panel">
           <div class="section-header">
             <div>
               <h2>Session</h2>
@@ -48,6 +49,9 @@
             <input id="sessionTitle" type="text" placeholder="Session name, e.g. Oleary Birthday Poker" autocomplete="off" />
             <button type="submit">Save Session</button>
           </form>
+          <div class="session-actions">
+            <button id="closeAllBetting" type="button">Close all betting</button>
+          </div>
         </section>
 
         <section id="playersPanel" class="panel leader-panel tab-panel active">
