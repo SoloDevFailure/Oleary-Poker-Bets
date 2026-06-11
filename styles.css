@@ -702,6 +702,29 @@ select {
   }
 }
 
+@media (max-width: 520px) {
+  .toolbar {
+    display: grid;
+    grid-template-columns: 1fr repeat(4, auto);
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  .sync-status {
+    grid-column: 1 / -1;
+    justify-self: start;
+    font-size: 0.78rem;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .toolbar button,
+  .toolbar .file-button {
+    border-radius: 6px;
+    font-size: 0.82rem;
+    padding: 0.55rem 0.55rem;
+  }
+}
+
 @media (min-width: 720px) {
   .topbar {
     align-items: center;
