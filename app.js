@@ -656,8 +656,18 @@ async function saveRemoteBet(event, bet) {
   const player = state.players.find((item) => item.id === bet.playerId);
   if (!player) return;
 
-  await saveRemotePlayer(player);
-  await saveRemoteMarket(event);
+  if (!player.remoteId) await saveRemotePlayer(player);
+  if (!event.remoteId) await saveRemoteMarket(event);
+  const { data: latestMarket, error: marketError } = await remote.client
+    .from("markets")
+    .select("status")
+    .eq("id", event.remoteId)
+    .single();
+  if (marketError) throw marketError;
+  if (latestMarket.status !== "open") {
+    event.status = latestMarket.status;
+    throw new Error("Betting is closed for this market.");
+  }
   const outcome = await ensureRemoteOutcome(event, bet.outcome);
 
   const payload = {
@@ -830,6 +840,27 @@ async function runRemote(task) {
     console.error("Supabase sync failed", error);
     setSyncStatus(`Sync error: ${shortError(error)}`, "offline");
     return false;
+  }
+}
+
+async function placeBet(event, nextBet) {
+  const previousBets = [...event.bets];
+  event.bets = event.bets.filter((item) => item.playerId !== nextBet.playerId);
+  event.bets.push(nextBet);
+  render();
+
+  if (!remoteReady()) return;
+
+  const saved = await runRemote(() => saveRemoteBet(event, nextBet));
+  if (!saved) {
+    event.bets = previousBets;
+    await loadRemoteState();
+    await askConfirm({
+      title: "Bet not placed",
+      message: "Betting is closed for this market.",
+      action: "OK",
+      notice: true,
+    });
   }
 }
 
@@ -1478,6 +1509,7 @@ async function closeAllBetting() {
     await Promise.all(state.players.map((player) => saveRemotePlayer(player)));
     await Promise.all(openMarkets.map((market) => saveRemoteMarket(market)));
   });
+  if (remoteReady()) await loadRemoteState();
 }
 
 async function resolveEvent(eventId) {
@@ -1684,10 +1716,7 @@ function openBetDialog(eventId, playerId) {
       const outcome = outcomeChoice.value;
       if (value > 0 && value <= available && outcome) {
         const nextBet = { playerId, value, outcome };
-        event.bets = event.bets.filter((item) => item.playerId !== playerId);
-        event.bets.push(nextBet);
-        render();
-        runRemote(() => saveRemoteBet(event, nextBet));
+        placeBet(event, nextBet);
       }
     }
 
@@ -1874,7 +1903,7 @@ document.addEventListener("click", (event) => {
   if (refreshMarketButton) refreshMarketButtonState(refreshMarketButton);
   if (playerBetButton) {
     const player = getCurrentPlayer();
-    if (player) openBetDialog(playerBetButton.dataset.playerBet, player.id);
+    if (player) openPlayerBetDialog(playerBetButton.dataset.playerBet, player.id);
   }
   if (removeOutcomeButton) {
     const labels = Array.from(document.querySelectorAll("[data-outcome-field]")).map((input) => input.value);
@@ -1882,6 +1911,29 @@ document.addEventListener("click", (event) => {
     renderOutcomeFields(labels);
   }
 });
+
+async function openPlayerBetDialog(eventId, playerId) {
+  if (remoteReady()) {
+    try {
+      await loadRemoteState();
+    } catch (error) {
+      console.error("Player bet refresh failed", error);
+    }
+  }
+
+  const event = state.events.find((item) => item.id === eventId);
+  if (!event || event.status !== "open") {
+    await askConfirm({
+      title: "Betting closed",
+      message: "This market is no longer open for bets.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  openBetDialog(eventId, playerId);
+}
 
 els.playerJoinForm.addEventListener("submit", async (event) => {
   event.preventDefault();
