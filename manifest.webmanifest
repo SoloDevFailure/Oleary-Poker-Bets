@@ -1,0 +1,17 @@
+{
+  "name": "Oleary Ave Poker Bets",
+  "short_name": "Oleary Bets",
+  "description": "A friendly points betting host console for poker night.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f5f2eb",
+  "theme_color": "#166b4d",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Oleary Ave Poker Bets</title>
+    <meta name="theme-color" content="#166b4d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Oleary Bets" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" />
+    <link rel="apple-touch-icon" href="icon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Friendly points betting</p>
+          <h1>Oleary Ave Poker Bets</h1>
+        </div>
+        <div class="toolbar">
+          <span id="syncStatus" class="sync-status">Local host mode</span>
+          <button id="syncNow" class="ghost">Refresh</button>
+          <button id="exportData" class="ghost">Export</button>
+          <label class="ghost file-button">
+            Import
+            <input id="importData" type="file" accept="application/json" />
+          </label>
+          <button id="resetNight" class="danger">Reset</button>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Main views">
+        <button id="playersTab" class="tab active" type="button" data-tab="players">Players</button>
+        <button id="eventsTab" class="tab" type="button" data-tab="events">Markets</button>
+      </nav>
+
+      <main class="layout">
+        <section id="sessionPanel" class="panel session-panel">
+          <div class="section-header">
+            <div>
+              <h2>Session</h2>
+              <p>Create or rename the shared session players will join.</p>
+            </div>
+          </div>
+          <form id="sessionForm" class="event-form">
+            <input id="sessionTitle" type="text" placeholder="Session name, e.g. Oleary Birthday Poker" autocomplete="off" />
+            <button type="submit">Save Session</button>
+          </form>
+        </section>
+
+        <section id="playersPanel" class="panel leader-panel tab-panel active">
+          <div class="section-header">
+            <div>
+              <h2>Players</h2>
+              <p>Scores sort highest first, then alphabetically.</p>
+            </div>
+          </div>
+
+          <form id="playerForm" class="inline-form">
+            <input id="playerName" type="text" placeholder="Player name" autocomplete="off" />
+            <input id="startingPoints" type="number" min="1" step="1" value="100" aria-label="Starting points" />
+            <button type="submit">Add</button>
+          </form>
+
+          <div id="playersList" class="players-list"></div>
+        </section>
+
+        <section id="eventsPanel" class="panel events-panel tab-panel">
+          <div class="section-header">
+            <div>
+              <h2>Markets</h2>
+              <p>Create markets, take bets, close betting, then call outcomes.</p>
+            </div>
+          </div>
+
+          <form id="eventForm" class="market-builder">
+            <label>
+              Market title
+              <input id="eventName" type="text" placeholder="e.g. First out in poker" autocomplete="off" />
+            </label>
+
+            <div class="builder-block">
+              <div class="builder-heading">
+                <h3>Outcomes</h3>
+                <button id="addOutcome" class="ghost" type="button">+ Add outcome</button>
+              </div>
+              <div id="outcomeFields" class="outcome-fields"></div>
+            </div>
+
+            <label class="checkbox-row">
+              <input id="lockOnCreate" type="checkbox" />
+              Lock immediately
+            </label>
+
+            <label class="checkbox-row">
+              <input id="bonusEnabled" type="checkbox" />
+              Bonus points trigger
+            </label>
+
+            <div id="bonusFields" class="bonus-fields" hidden>
+              <input id="bonusLabel" type="text" placeholder="Condition, e.g. Before blinds go up" autocomplete="off" />
+              <input id="bonusPoints" type="number" min="0" step="1" placeholder="Bonus points" />
+            </div>
+
+            <button type="submit">Publish Market</button>
+          </form>
+
+          <div id="eventsList" class="events-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <template id="betDialogTemplate">
+      <dialog class="bet-dialog">
+        <form method="dialog" class="dialog-card">
+          <div class="dialog-header">
+            <div>
+              <p class="eyebrow">Place bet</p>
+              <h2 data-player-name></h2>
+            </div>
+            <button value="cancel" class="icon-button" aria-label="Close">x</button>
+          </div>
+
+          <p class="muted" data-available></p>
+
+          <label>
+            Outcome
+            <select data-outcome-choice>
+              <option value="">Choose outcome...</option>
+            </select>
+          </label>
+
+          <label>
+            Bet value
+            <input data-bet-value type="number" min="0" step="1" />
+          </label>
+
+          <div class="dialog-actions">
+            <button value="remove" class="ghost" data-remove-bet>Remove Bet</button>
+            <button value="cancel" class="ghost">Cancel</button>
+            <button value="confirm">Place Bet</button>
+          </div>
+        </form>
+      </dialog>
+    </template>
+
+    <dialog id="confirmDialog" class="confirm-dialog">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow" data-confirm-kicker>Confirm action</p>
+            <h2 data-confirm-title>Are you sure?</h2>
+          </div>
+        </div>
+        <p class="muted" data-confirm-message></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="ghost" data-confirm-cancel autofocus>Cancel</button>
+          <button value="confirm" data-confirm-action>Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
