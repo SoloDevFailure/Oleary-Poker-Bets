@@ -28,7 +28,6 @@ const els = {
   eventName: document.querySelector("#eventName"),
   outcomeFields: document.querySelector("#outcomeFields"),
   addOutcome: document.querySelector("#addOutcome"),
-  lockOnCreate: document.querySelector("#lockOnCreate"),
   bonusEnabled: document.querySelector("#bonusEnabled"),
   bonusFields: document.querySelector("#bonusFields"),
   bonusLabel: document.querySelector("#bonusLabel"),
@@ -379,34 +378,6 @@ function groupBy(items, key) {
   }, new Map());
 }
 
-async function saveRemotePlayer(player) {
-  if (!remoteReady()) return;
-
-  const payload = {
-    session_id: remote.session.id,
-    client_id: player.id,
-    display_name: player.name,
-    status: player.status || "approved",
-    starting_points: Number(player.startingPoints ?? player.points ?? 100),
-    points: Number(player.points),
-  };
-
-  if (player.remoteId) {
-    const { error } = await remote.client.from("players").update(payload).eq("id", player.remoteId);
-    if (error) throw error;
-    return;
-  }
-
-  const { data, error } = await remote.client
-    .from("players")
-    .insert(payload)
-    .select("*")
-    .single();
-
-  if (error) throw error;
-  player.remoteId = data.id;
-}
-
 async function saveRemoteMarket(event) {
   if (!remoteReady()) return;
 
@@ -427,17 +398,31 @@ async function saveRemoteMarket(event) {
     winning_selection: event.bonusAwarded ? { bonus_awarded: true } : event.status === "resolved" ? { bonus_awarded: false } : null,
   };
 
-  if (event.winningOutcome && event.status === "resolved") {
-    const outcome = await ensureRemoteOutcome(event, event.winningOutcome);
-    payload.winning_outcome_id = outcome.id;
-  } else {
-    payload.winning_outcome_id = null;
-  }
+  payload.winning_outcome_id = null;
 
   if (event.remoteId) {
-    const { error } = await remote.client.from("markets").update(payload).eq("id", event.remoteId);
+    const { data: updated, error } = await remote.client
+      .from("markets")
+      .update(payload)
+      .eq("id", event.remoteId)
+      .select("*")
+      .maybeSingle();
     if (error) throw error;
-    return;
+    if (updated) {
+      if (event.winningOutcome && event.status === "resolved") {
+        const outcome = await ensureRemoteOutcome(event, event.winningOutcome);
+        const { error: winningError } = await remote.client
+          .from("markets")
+          .update({ winning_outcome_id: outcome.id, winning_selection: payload.winning_selection })
+          .eq("id", event.remoteId);
+        if (winningError) throw winningError;
+      }
+      return;
+    }
+    event.remoteId = null;
+    payload.winning_outcome_id = null;
+    payload.winning_selection = null;
+    event.outcomes = (event.outcomes || []).map((outcome) => ({ ...outcome, remoteId: null }));
   }
 
   const { data, error } = await remote.client
@@ -448,6 +433,48 @@ async function saveRemoteMarket(event) {
 
   if (error) throw error;
   event.remoteId = data.id;
+  if (event.winningOutcome && event.status === "resolved") {
+    const outcome = await ensureRemoteOutcome(event, event.winningOutcome);
+    const { error: winningError } = await remote.client
+      .from("markets")
+      .update({ winning_outcome_id: outcome.id, winning_selection: payload.winning_selection })
+      .eq("id", event.remoteId);
+    if (winningError) throw winningError;
+  }
+}
+
+async function saveRemotePlayer(player) {
+  if (!remoteReady()) return;
+
+  const payload = {
+    session_id: remote.session.id,
+    client_id: player.id,
+    display_name: player.name,
+    status: player.status || "approved",
+    starting_points: Number(player.startingPoints ?? player.points ?? 100),
+    points: Number(player.points),
+  };
+
+  if (player.remoteId) {
+    const { data: updated, error } = await remote.client
+      .from("players")
+      .update(payload)
+      .eq("id", player.remoteId)
+      .select("*")
+      .maybeSingle();
+    if (error) throw error;
+    if (updated) return;
+    player.remoteId = null;
+  }
+
+  const { data, error } = await remote.client
+    .from("players")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) throw error;
+  player.remoteId = data.id;
 }
 
 async function saveRemoteSessionTitle(title) {
@@ -649,7 +676,7 @@ function renderOutcomeFields(labels = ["", ""]) {
   els.outcomeFields.innerHTML = labels.map((label, index) => `
     <div class="outcome-field">
       <input data-outcome-field type="text" value="${escapeAttr(label)}" placeholder="Outcome ${index + 1}" autocomplete="off" />
-      <button class="ghost" type="button" data-remove-outcome="${index}" ${labels.length <= 2 ? "disabled" : ""}>Remove</button>
+      <button class="danger x-button" type="button" data-remove-outcome="${index}" aria-label="Remove outcome" ${labels.length <= 2 ? "disabled" : ""}>x</button>
     </div>
   `).join("");
 }
@@ -847,7 +874,7 @@ function renderEvent(event) {
           <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
           ${event.status === "open" ? `<button data-close-event="${event.id}">Close Betting</button>` : ""}
           ${event.status === "locked" ? outcomePicker : ""}
-          <button class="ghost" data-remove-event="${event.id}">Remove</button>
+          <button class="danger x-button market-remove" data-remove-event="${event.id}" aria-label="Remove market">x</button>
         </div>
       </div>
       <div class="event-body">
@@ -1027,7 +1054,7 @@ async function addPlayer(name, points) {
   }
 }
 
-async function addEvent(name, lockImmediately, outcomeLabels = [], bonus = {}) {
+async function addEvent(name, outcomeLabels = [], bonus = {}) {
   if (supabaseConfigured() && !remoteReady()) {
     await askConfirm({
       title: "Supabase not ready",
@@ -1041,7 +1068,7 @@ async function addEvent(name, lockImmediately, outcomeLabels = [], bonus = {}) {
   const newEvent = {
     id: uid(),
     name,
-    status: lockImmediately ? "locked" : "open",
+    status: "open",
     marketType: "single",
     payoutMode: "pool",
     payoutMultiplier: 1,
@@ -1052,7 +1079,7 @@ async function addEvent(name, lockImmediately, outcomeLabels = [], bonus = {}) {
     outcomes: outcomeLabels.map((label) => ({ id: uid(), label })),
     winningOutcome: null,
     createdAt: new Date().toISOString(),
-    lockedAt: lockImmediately ? new Date().toISOString() : null,
+    lockedAt: null,
   };
   state.events.unshift(newEvent);
   activeTab = "events";
@@ -1396,18 +1423,21 @@ async function removePlayer(playerId) {
 async function removeEvent(eventId) {
   const event = state.events.find((item) => item.id === eventId);
   if (!event) return;
-  if (event.status !== "open") {
-    const confirmed = await askConfirm({
-      title: "Remove market?",
-      message: `Remove "${event.name}"? Scores will not be reversed.`,
-      action: "Remove event",
-      danger: true,
-    });
-    if (!confirmed) return;
+  const confirmed = await askConfirm({
+    title: "Remove market?",
+    message: `Are you sure you want to remove "${event.name}"? Scores will not be reversed.`,
+    action: "Remove market",
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  if (remoteReady()) {
+    const removed = await runRemote(() => deleteRemoteEvent(event));
+    if (!removed) return;
   }
+
   state.events = state.events.filter((item) => item.id !== eventId);
   render();
-  await runRemote(() => deleteRemoteEvent(event));
 }
 
 function escapeHtml(value) {
@@ -1475,10 +1505,9 @@ els.eventForm.addEventListener("submit", async (event) => {
     }
     : {};
   const beforeCount = state.events.length;
-  await addEvent(name, els.lockOnCreate.checked, outcomeLabels, bonus);
+  await addEvent(name, outcomeLabels, bonus);
   if (state.events.length === beforeCount) return;
   els.eventName.value = "";
-  els.lockOnCreate.checked = false;
   els.bonusEnabled.checked = false;
   els.bonusFields.hidden = true;
   els.bonusLabel.value = "";

@@ -51,6 +51,13 @@ button.penalty {
   background: var(--danger);
 }
 
+.x-button {
+  min-width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  text-transform: uppercase;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -283,6 +290,10 @@ h3 {
 .outcome-fields {
   display: grid;
   gap: 0.5rem;
+}
+
+.add-outcome-button {
+  justify-self: start;
 }
 
 .bonus-fields {
@@ -547,9 +558,14 @@ h3 {
 }
 
 .event-actions {
+  align-items: flex-start;
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.market-remove {
+  margin-left: auto;
 }
 
 .market-summary-grid {
