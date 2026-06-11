@@ -2,7 +2,13 @@ const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
 
 const state = loadState();
+const params = new URLSearchParams(window.location.search);
+const appMode = params.get("mode") === "player" ? "player" : "host";
+const deviceKey = params.get("device") || localStorage.getItem("oleary-player-device-id") || uid();
+localStorage.setItem("oleary-player-device-id", deviceKey);
+let currentPlayerId = localStorage.getItem(`oleary-player-id-${deviceKey}`) || null;
 let activeTab = localStorage.getItem("poker-night-bets-active-tab") || "players";
+let activePlayerTab = localStorage.getItem("poker-night-bets-player-tab") || "profile";
 const collapsedEvents = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-events") || "[]"));
 const expandedPlayers = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-players") || "[]"));
 const remote = {
@@ -10,6 +16,10 @@ const remote = {
   session: null,
   enabled: false,
 };
+
+if (appMode === "player") {
+  document.title = "Oleary Poker Bets Player";
+}
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js")
@@ -41,6 +51,19 @@ const els = {
   importData: document.querySelector("#importData"),
   resetNight: document.querySelector("#resetNight"),
   betDialogTemplate: document.querySelector("#betDialogTemplate"),
+  playerTabs: document.querySelector("#playerTabs"),
+  playerJoinPanel: document.querySelector("#playerJoinPanel"),
+  playerJoinForm: document.querySelector("#playerJoinForm"),
+  playerJoinName: document.querySelector("#playerJoinName"),
+  playerProfileTab: document.querySelector("#playerProfileTab"),
+  playerMarketsTab: document.querySelector("#playerMarketsTab"),
+  playerSocialTab: document.querySelector("#playerSocialTab"),
+  playerProfilePanel: document.querySelector("#playerProfilePanel"),
+  playerMarketsPanel: document.querySelector("#playerMarketsPanel"),
+  playerSocialPanel: document.querySelector("#playerSocialPanel"),
+  playerProfile: document.querySelector("#playerProfile"),
+  playerMarketsList: document.querySelector("#playerMarketsList"),
+  playerSocialList: document.querySelector("#playerSocialList"),
   playersTab: document.querySelector("#playersTab"),
   eventsTab: document.querySelector("#eventsTab"),
   sessionTab: document.querySelector("#sessionTab"),
@@ -372,6 +395,14 @@ async function loadRemoteState() {
     };
   });
 
+  if (appMode === "player") {
+    const devicePlayer = state.players.find((player) => player.deviceId === deviceKey);
+    if (devicePlayer) {
+      currentPlayerId = devicePlayer.id;
+      localStorage.setItem(`oleary-player-id-${deviceKey}`, currentPlayerId);
+    }
+  }
+
   render();
 }
 
@@ -481,6 +512,71 @@ async function saveRemotePlayer(player) {
 
   if (error) throw error;
   player.remoteId = data.id;
+}
+
+async function joinCurrentSession(name) {
+  if (!remoteReady()) {
+    await askConfirm({
+      title: "Session not ready",
+      message: "The shared session is still loading. Tap Refresh and try again.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  if (remote.session.joining_enabled === false) {
+    await askConfirm({
+      title: "Joining is closed",
+      message: "The host has closed player joining for this session.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  const points = Number(remote.session.default_player_points ?? 100);
+  const player = {
+    id: uid(),
+    name,
+    points,
+    startingPoints: points,
+    status: "approved",
+    deviceId: deviceKey,
+    adjustments: [],
+  };
+
+  const { data, error } = await remote.client
+    .from("players")
+    .insert({
+      session_id: remote.session.id,
+      client_id: player.id,
+      display_name: player.name,
+      device_id: deviceKey,
+      status: "approved",
+      starting_points: points,
+      points,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    setSyncStatus(`Join error: ${shortError(error)}`, "offline");
+    await askConfirm({
+      title: "Could not join",
+      message: shortError(error),
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  player.remoteId = data.id;
+  currentPlayerId = player.id;
+  localStorage.setItem(`oleary-player-id-${deviceKey}`, currentPlayerId);
+  state.players.push(player);
+  render();
+  await loadRemoteState();
 }
 
 async function saveRemoteSessionSettings(settings) {
@@ -716,12 +812,35 @@ async function runRemote(task) {
 
 function render() {
   saveState();
+  renderMode();
   renderTabs();
   renderPlayers();
   renderEvents();
+  renderPlayerMode();
+}
+
+function renderMode() {
+  const isPlayer = appMode === "player";
+  document.body.classList.toggle("player-mode", isPlayer);
+  document.querySelector("nav.tabs:not(#playerTabs)").hidden = isPlayer;
+  els.playerTabs.hidden = !isPlayer || !getCurrentPlayer();
+  els.sessionPanel.hidden = isPlayer;
+  els.playersPanel.hidden = isPlayer;
+  els.eventsPanel.hidden = isPlayer;
+  els.playerJoinPanel.hidden = !isPlayer || Boolean(getCurrentPlayer());
+  els.playerProfilePanel.hidden = !isPlayer || !getCurrentPlayer();
+  els.playerMarketsPanel.hidden = !isPlayer || !getCurrentPlayer();
+  els.playerSocialPanel.hidden = !isPlayer || !getCurrentPlayer();
+  els.exportData.hidden = isPlayer;
+  els.importData.closest(".file-button").hidden = isPlayer;
+  els.resetNight.hidden = isPlayer;
 }
 
 function renderTabs() {
+  if (appMode === "player") {
+    renderPlayerTabs();
+    return;
+  }
   const showSession = activeTab === "session";
   const showPlayers = activeTab === "players";
   const showEvents = activeTab === "events";
@@ -731,6 +850,18 @@ function renderTabs() {
   els.sessionPanel.classList.toggle("active", showSession);
   els.playersPanel.classList.toggle("active", showPlayers);
   els.eventsPanel.classList.toggle("active", showEvents);
+}
+
+function renderPlayerTabs() {
+  const showProfile = activePlayerTab === "profile";
+  const showMarkets = activePlayerTab === "markets";
+  const showSocial = activePlayerTab === "social";
+  els.playerProfileTab.classList.toggle("active", showProfile);
+  els.playerMarketsTab.classList.toggle("active", showMarkets);
+  els.playerSocialTab.classList.toggle("active", showSocial);
+  els.playerProfilePanel.classList.toggle("active", showProfile);
+  els.playerMarketsPanel.classList.toggle("active", showMarkets);
+  els.playerSocialPanel.classList.toggle("active", showSocial);
 }
 
 function renderPlayers() {
@@ -799,6 +930,113 @@ function renderPlayerDetails(player) {
       </div>
     </div>
   `;
+}
+
+function getCurrentPlayer() {
+  if (!currentPlayerId) return null;
+  return state.players.find((player) => player.id === currentPlayerId || player.remoteId === currentPlayerId) || null;
+}
+
+function renderPlayerMode() {
+  if (appMode !== "player") return;
+  const player = getCurrentPlayer();
+  if (!player) return;
+  renderPlayerProfile(player);
+  renderPlayerMarkets(player);
+  renderPlayerSocial(player);
+}
+
+function renderPlayerProfile(player) {
+  const reserved = getReservedByPlayer(player.id);
+  const available = getAvailablePoints(player.id);
+  const activity = getPlayerActivity(player.id);
+
+  els.playerProfile.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h2>${escapeHtml(player.name)}</h2>
+        <p>Your profile for ${escapeHtml(remote.session?.title || "this session")}.</p>
+      </div>
+    </div>
+    <div class="activity-summary">
+      <span><strong>${money(player.points)}</strong> current</span>
+      <span><strong>${money(available)}</strong> available</span>
+      <span><strong>${money(reserved)}</strong> reserved</span>
+    </div>
+    <div class="activity-summary">
+      <span><strong>${money(activity.paid)}</strong> won</span>
+      <span><strong>${money(activity.staked)}</strong> staked</span>
+      <span><strong>${money(activity.net)}</strong> net</span>
+    </div>
+    <details class="odds-menu" open>
+      <summary>Betting history</summary>
+      <div class="activity-list">${activity.rows.length ? activity.rows.join("") : '<div class="empty compact">No bets yet.</div>'}</div>
+    </details>
+  `;
+}
+
+function renderPlayerMarkets(player) {
+  const markets = state.events.filter((event) => event.status !== "voided");
+  if (markets.length === 0) {
+    els.playerMarketsList.innerHTML = '<div class="empty">No markets published yet.</div>';
+    return;
+  }
+
+  els.playerMarketsList.innerHTML = markets.map((event) => renderPlayerMarket(event, player)).join("");
+}
+
+function renderPlayerMarket(event, player) {
+  const pool = getEventPool(event);
+  const bet = event.bets.find((item) => item.playerId === player.id);
+  const canBet = event.status === "open";
+
+  return `
+    <article class="event-card">
+      <div class="event-top">
+        <div>
+          <div class="event-meta">
+            <h3>${escapeHtml(event.name)}</h3>
+            <span class="pill ${event.status}">${event.status}</span>
+            ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus available</span>' : ""}
+          </div>
+          <p class="muted">Pool: ${money(pool)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
+          ${bet ? `<p class="muted">Your bet: <strong>${money(bet.value)}</strong> on <strong>${escapeHtml(bet.outcome)}</strong></p>` : '<p class="muted">You have not bet on this market.</p>'}
+        </div>
+        <div class="event-actions">
+          <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
+          <button ${canBet ? "" : "disabled"} data-player-bet="${event.id}">${bet ? "Edit Bet" : "Place Bet"}</button>
+        </div>
+      </div>
+      <div class="event-body">
+        ${event.bonusPoints > 0 ? `<p class="muted">Bonus: <strong>${money(event.bonusPoints)}</strong> · ${escapeHtml(event.bonusLabel || "Host-triggered bonus")}</p>` : ""}
+        ${renderMarketOddsMenu(event)}
+      </div>
+    </article>
+  `;
+}
+
+function renderPlayerSocial(player) {
+  const players = sortPlayers();
+  els.playerSocialList.innerHTML = players.map((item) => {
+    const recentWin = state.events.some((event) =>
+      event.status === "resolved" && getEventPayouts(event).some((payout) => payout.playerId === item.id)
+    );
+    return `
+      <article class="player-row">
+        <div class="player-main">
+          <div>
+            <div class="player-meta">
+              <h3>${escapeHtml(item.name)} ${item.id === player.id ? "(you)" : ""}</h3>
+              ${recentWin ? '<span class="star" title="Recent win">🏆</span>' : ""}
+            </div>
+          </div>
+          <div class="player-points">
+            <span class="score">${money(item.points)}</span>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
 function getPlayerActivity(playerId) {
@@ -1544,6 +1782,7 @@ document.addEventListener("click", (event) => {
   const removeEventButton = event.target.closest("[data-remove-event]");
   const removeOutcomeButton = event.target.closest("[data-remove-outcome]");
   const refreshMarketButton = event.target.closest("[data-refresh-market]");
+  const playerBetButton = event.target.closest("[data-player-bet]");
 
   if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId);
   if (closeButton) closeEvent(closeButton.dataset.closeEvent);
@@ -1557,11 +1796,22 @@ document.addEventListener("click", (event) => {
   if (removePlayerButton) removePlayer(removePlayerButton.dataset.removePlayer);
   if (removeEventButton) removeEvent(removeEventButton.dataset.removeEvent);
   if (refreshMarketButton) refreshMarketButtonState(refreshMarketButton);
+  if (playerBetButton) {
+    const player = getCurrentPlayer();
+    if (player) openBetDialog(playerBetButton.dataset.playerBet, player.id);
+  }
   if (removeOutcomeButton) {
     const labels = Array.from(document.querySelectorAll("[data-outcome-field]")).map((input) => input.value);
     labels.splice(Number(removeOutcomeButton.dataset.removeOutcome), 1);
     renderOutcomeFields(labels);
   }
+});
+
+els.playerJoinForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = els.playerJoinName.value.trim();
+  if (!name) return;
+  await joinCurrentSession(name);
 });
 
 async function refreshMarketButtonState(button) {
@@ -1667,6 +1917,14 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
       els.startingPoints.value = Number(remote.session?.default_player_points ?? els.defaultPlayerPoints.value ?? 100);
     }
     renderTabs();
+  });
+});
+
+document.querySelectorAll("[data-player-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    activePlayerTab = button.dataset.playerTab;
+    localStorage.setItem("poker-night-bets-player-tab", activePlayerTab);
+    renderPlayerTabs();
   });
 });
 

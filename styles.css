@@ -252,6 +252,18 @@ h3 {
   display: block;
 }
 
+.player-tab-panel {
+  display: none;
+}
+
+.player-tab-panel.active {
+  display: block;
+}
+
+.player-mode .toolbar {
+  margin-left: auto;
+}
+
 .section-header {
   display: flex;
   justify-content: space-between;

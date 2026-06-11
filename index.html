@@ -37,7 +37,50 @@
         <button id="eventsTab" class="tab" type="button" data-tab="events">Markets</button>
       </nav>
 
+      <nav id="playerTabs" class="tabs player-tabs" aria-label="Player views" hidden>
+        <button id="playerProfileTab" class="tab active" type="button" data-player-tab="profile">Profile</button>
+        <button id="playerMarketsTab" class="tab" type="button" data-player-tab="markets">Markets</button>
+        <button id="playerSocialTab" class="tab" type="button" data-player-tab="social">Social</button>
+      </nav>
+
       <main class="layout">
+        <section id="playerJoinPanel" class="panel player-panel" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Join Session</h2>
+              <p>Choose your name to join the current poker session.</p>
+            </div>
+          </div>
+          <form id="playerJoinForm" class="inline-form">
+            <input id="playerJoinName" type="text" placeholder="Username" autocomplete="off" />
+            <button type="submit">Join</button>
+          </form>
+        </section>
+
+        <section id="playerProfilePanel" class="panel player-panel player-tab-panel active" hidden>
+          <div id="playerProfile"></div>
+        </section>
+
+        <section id="playerMarketsPanel" class="panel player-panel player-tab-panel" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Markets</h2>
+              <p>Place or edit your bets while markets are open.</p>
+            </div>
+          </div>
+          <div id="playerMarketsList" class="events-list"></div>
+        </section>
+
+        <section id="playerSocialPanel" class="panel player-panel player-tab-panel" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Social</h2>
+              <p>See who has joined and how everyone is travelling.</p>
+            </div>
+          </div>
+          <div id="playerSocialList" class="players-list"></div>
+        </section>
+
         <section id="sessionPanel" class="panel session-panel tab-panel">
           <div class="section-header">
             <div>
