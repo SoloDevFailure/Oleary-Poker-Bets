@@ -63,6 +63,7 @@ const els = {
   playerSocialPanel: document.querySelector("#playerSocialPanel"),
   playerProfile: document.querySelector("#playerProfile"),
   playerMarketsList: document.querySelector("#playerMarketsList"),
+  refreshPlayerMarkets: document.querySelector("#refreshPlayerMarkets"),
   playerSocialList: document.querySelector("#playerSocialList"),
   playersTab: document.querySelector("#playersTab"),
   eventsTab: document.querySelector("#eventsTab"),
@@ -371,7 +372,9 @@ async function loadRemoteState() {
       bonusAwarded: Boolean(market.winning_selection?.bonus_awarded),
       winningOutcome,
       createdAt: market.created_at,
+      lockedAt: market.locked_at,
       resolvedAt: market.resolved_at,
+      stakesLocked: Boolean(market.locked_at || market.resolved_at || market.voided_at),
       bets: (betsByMarket.get(market.id) || []).map((bet) => {
         const outcome = outcomesById.get(bet.outcome_id);
         return {
@@ -666,7 +669,7 @@ async function saveRemoteBet(event, bet) {
   if (marketError) throw marketError;
   if (latestMarket.status !== "open") {
     event.status = latestMarket.status;
-    throw new Error("Betting is closed for this market.");
+    throw new Error("Cannot place bet. Market has closed.");
   }
   const outcome = await ensureRemoteOutcome(event, bet.outcome);
 
@@ -856,8 +859,8 @@ async function placeBet(event, nextBet) {
     event.bets = previousBets;
     await loadRemoteState();
     await askConfirm({
-      title: "Bet not placed",
-      message: "Betting is closed for this market.",
+      title: "Cannot place bet",
+      message: "Market has closed.",
       action: "OK",
       notice: true,
     });
@@ -1460,12 +1463,15 @@ async function closeEvent(eventId) {
   const event = state.events.find((item) => item.id === eventId);
   if (!event || event.status !== "open") return;
 
-  event.bets.forEach((bet) => {
-    const player = state.players.find((item) => item.id === bet.playerId);
-    if (player) player.points -= bet.value;
-  });
+  if (!event.stakesLocked) {
+    event.bets.forEach((bet) => {
+      const player = state.players.find((item) => item.id === bet.playerId);
+      if (player) player.points -= bet.value;
+    });
+    event.stakesLocked = true;
+  }
   event.status = "locked";
-  event.lockedAt = new Date().toISOString();
+  event.lockedAt = event.lockedAt || new Date().toISOString();
   render();
   await runRemote(async () => {
     await Promise.all(event.bets.map((bet) => saveRemoteBet(event, bet)));
@@ -1495,12 +1501,15 @@ async function closeAllBetting() {
   if (!confirmed) return;
 
   openMarkets.forEach((market) => {
-    market.bets.forEach((bet) => {
-      const player = state.players.find((item) => item.id === bet.playerId);
-      if (player) player.points -= bet.value;
-    });
+    if (!market.stakesLocked) {
+      market.bets.forEach((bet) => {
+        const player = state.players.find((item) => item.id === bet.playerId);
+        if (player) player.points -= bet.value;
+      });
+      market.stakesLocked = true;
+    }
     market.status = "locked";
-    market.lockedAt = new Date().toISOString();
+    market.lockedAt = market.lockedAt || new Date().toISOString();
   });
 
   render();
@@ -1924,8 +1933,8 @@ async function openPlayerBetDialog(eventId, playerId) {
   const event = state.events.find((item) => item.id === eventId);
   if (!event || event.status !== "open") {
     await askConfirm({
-      title: "Betting closed",
-      message: "This market is no longer open for bets.",
+      title: "Market is closed",
+      message: "You cannot place or edit a bet after betting has closed.",
       action: "OK",
       notice: true,
     });
@@ -1968,6 +1977,22 @@ async function refreshMarketButtonState(button) {
   }
 }
 
+async function refreshSharedState() {
+  if (!remoteReady()) {
+    await initSupabaseConnection();
+    return;
+  }
+
+  try {
+    setSyncStatus("Refreshing...", "");
+    await loadRemoteState();
+    setSyncStatus(`Supabase synced · Session ${remote.session.join_code}`, "online");
+  } catch (error) {
+    console.error("Supabase refresh failed", error);
+    setSyncStatus(`Refresh error: ${shortError(error)}`, "offline");
+  }
+}
+
 els.addOutcome.addEventListener("click", () => {
   const labels = Array.from(document.querySelectorAll("[data-outcome-field]")).map((input) => input.value);
   labels.push("");
@@ -1982,6 +2007,7 @@ els.bonusEnabled.addEventListener("change", () => {
 });
 
 els.closeAllBetting.addEventListener("click", closeAllBetting);
+els.refreshPlayerMarkets?.addEventListener("click", refreshSharedState);
 
 els.exportData.addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -2021,21 +2047,7 @@ els.resetNight.addEventListener("click", async () => {
   render();
 });
 
-els.syncNow.addEventListener("click", async () => {
-  if (!remoteReady()) {
-    await initSupabaseConnection();
-    return;
-  }
-
-  try {
-    setSyncStatus("Refreshing...", "");
-    await loadRemoteState();
-    setSyncStatus(`Supabase synced · Session ${remote.session.join_code}`, "online");
-  } catch (error) {
-    console.error("Supabase refresh failed", error);
-    setSyncStatus("Supabase refresh error", "offline");
-  }
-});
+els.syncNow.addEventListener("click", refreshSharedState);
 
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -2049,10 +2061,11 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 });
 
 document.querySelectorAll("[data-player-tab]").forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     activePlayerTab = button.dataset.playerTab;
     localStorage.setItem("poker-night-bets-player-tab", activePlayerTab);
     renderPlayerTabs();
+    if (remoteReady()) await refreshSharedState();
   });
 });
 
