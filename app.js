@@ -1,5 +1,6 @@
 const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
+const PLAYER_MARKETS_REFRESH_MS = 10000;
 
 const state = loadState();
 const params = new URLSearchParams(window.location.search);
@@ -9,8 +10,13 @@ localStorage.setItem("oleary-player-device-id", deviceKey);
 let currentPlayerId = localStorage.getItem(`oleary-player-id-${deviceKey}`) || null;
 let activeTab = localStorage.getItem("poker-night-bets-active-tab") || "players";
 let activePlayerTab = localStorage.getItem("poker-night-bets-player-tab") || "profile";
+let playerAutoRefreshTimer = null;
+let playerAutoRefreshInFlight = false;
 const collapsedEvents = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-events") || "[]"));
 const expandedPlayers = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-players") || "[]"));
+const seenWinPayoutsKey = `oleary-seen-win-payouts-${deviceKey}`;
+const seenWinPayouts = new Set(JSON.parse(localStorage.getItem(seenWinPayoutsKey) || "[]"));
+let winPopupsPrimed = localStorage.getItem(`${seenWinPayoutsKey}-primed`) === "yes";
 const remote = {
   client: null,
   session: null,
@@ -80,6 +86,9 @@ const els = {
   confirmMessage: document.querySelector("[data-confirm-message]"),
   confirmAction: document.querySelector("[data-confirm-action]"),
   confirmCancel: document.querySelector("[data-confirm-cancel]"),
+  winDialog: document.querySelector("#winDialog"),
+  winAmount: document.querySelector("[data-win-amount]"),
+  winMarket: document.querySelector("[data-win-market]"),
 };
 
 function uid() {
@@ -208,6 +217,49 @@ function askConfirm({ title, message, action = "Confirm", danger = false, notice
     els.confirmDialog.addEventListener("close", onClose);
     els.confirmDialog.showModal();
   });
+}
+
+function saveSeenWinPayouts() {
+  localStorage.setItem(seenWinPayoutsKey, JSON.stringify([...seenWinPayouts]));
+}
+
+function markWinPopupsPrimed() {
+  winPopupsPrimed = true;
+  localStorage.setItem(`${seenWinPayoutsKey}-primed`, "yes");
+}
+
+function getPlayerWinNotices(playerId) {
+  return state.events.flatMap((event) => getEventPayouts(event)
+    .filter((payout) => payout.playerId === playerId)
+    .map((payout) => ({
+      id: `${event.remoteId || event.id}:${payout.id || payout.playerId}:${Number(payout.amount).toFixed(4)}`,
+      marketName: event.name,
+      amount: payout.amount,
+      createdAt: payout.createdAt || event.resolvedAt || event.createdAt || "",
+    })));
+}
+
+function checkPlayerWinPopups() {
+  if (appMode !== "player" || !els.winDialog || els.winDialog.open || els.confirmDialog.open) return;
+  const player = getCurrentPlayer();
+  if (!player) return;
+
+  const notices = getPlayerWinNotices(player.id).sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  if (!winPopupsPrimed) {
+    notices.forEach((notice) => seenWinPayouts.add(notice.id));
+    saveSeenWinPayouts();
+    markWinPopupsPrimed();
+    return;
+  }
+
+  const freshNotice = notices.find((notice) => !seenWinPayouts.has(notice.id));
+  if (!freshNotice) return;
+
+  seenWinPayouts.add(freshNotice.id);
+  saveSeenWinPayouts();
+  els.winAmount.textContent = money(freshNotice.amount);
+  els.winMarket.textContent = freshNotice.marketName;
+  els.winDialog.showModal();
 }
 
 function money(value) {
@@ -411,6 +463,8 @@ async function loadRemoteState() {
   }
 
   render();
+  checkPlayerWinPopups();
+  updatePlayerAutoRefresh();
 }
 
 function groupBy(items, key) {
@@ -919,6 +973,7 @@ function renderPlayerTabs() {
   els.playerProfilePanel.classList.toggle("active", showProfile);
   els.playerMarketsPanel.classList.toggle("active", showMarkets);
   els.playerSocialPanel.classList.toggle("active", showSocial);
+  updatePlayerAutoRefresh();
 }
 
 function renderPlayers() {
@@ -1977,20 +2032,50 @@ async function refreshMarketButtonState(button) {
   }
 }
 
-async function refreshSharedState() {
+async function refreshSharedState(options = {}) {
+  const quiet = options?.quiet === true;
   if (!remoteReady()) {
     await initSupabaseConnection();
     return;
   }
 
   try {
-    setSyncStatus("Refreshing...", "");
+    if (!quiet) setSyncStatus("Refreshing...", "");
     await loadRemoteState();
     setSyncStatus(`Supabase synced · Session ${remote.session.join_code}`, "online");
   } catch (error) {
     console.error("Supabase refresh failed", error);
-    setSyncStatus(`Refresh error: ${shortError(error)}`, "offline");
+    if (!quiet) setSyncStatus(`Refresh error: ${shortError(error)}`, "offline");
   }
+}
+
+function shouldAutoRefreshPlayerMarkets() {
+  return appMode === "player"
+    && activePlayerTab === "markets"
+    && Boolean(getCurrentPlayer())
+    && remoteReady()
+    && document.visibilityState === "visible";
+}
+
+function updatePlayerAutoRefresh() {
+  if (!shouldAutoRefreshPlayerMarkets()) {
+    if (playerAutoRefreshTimer) {
+      clearInterval(playerAutoRefreshTimer);
+      playerAutoRefreshTimer = null;
+    }
+    return;
+  }
+
+  if (playerAutoRefreshTimer) return;
+  playerAutoRefreshTimer = setInterval(async () => {
+    if (!shouldAutoRefreshPlayerMarkets() || playerAutoRefreshInFlight) return;
+    playerAutoRefreshInFlight = true;
+    try {
+      await refreshSharedState({ quiet: true });
+    } finally {
+      playerAutoRefreshInFlight = false;
+    }
+  }, PLAYER_MARKETS_REFRESH_MS);
 }
 
 els.addOutcome.addEventListener("click", () => {
@@ -2068,6 +2153,8 @@ document.querySelectorAll("[data-player-tab]").forEach((button) => {
     if (remoteReady()) await refreshSharedState();
   });
 });
+
+document.addEventListener("visibilitychange", updatePlayerAutoRefresh);
 
 renderOutcomeFields();
 render();
