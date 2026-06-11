@@ -77,6 +77,7 @@ const els = {
   playersPanel: document.querySelector("#playersPanel"),
   eventsPanel: document.querySelector("#eventsPanel"),
   sessionPanel: document.querySelector("#sessionPanel"),
+  showPlayerQr: document.querySelector("#showPlayerQr"),
   closeAllBetting: document.querySelector("#closeAllBetting"),
   syncStatus: document.querySelector("#syncStatus"),
   syncNow: document.querySelector("#syncNow"),
@@ -86,6 +87,11 @@ const els = {
   confirmMessage: document.querySelector("[data-confirm-message]"),
   confirmAction: document.querySelector("[data-confirm-action]"),
   confirmCancel: document.querySelector("[data-confirm-cancel]"),
+  qrDialog: document.querySelector("#qrDialog"),
+  playerQrCode: document.querySelector("#playerQrCode"),
+  playerQrFallback: document.querySelector("#playerQrFallback"),
+  playerQrUrl: document.querySelector("#playerQrUrl"),
+  copyPlayerUrl: document.querySelector("#copyPlayerUrl"),
   winDialog: document.querySelector("#winDialog"),
   winAmount: document.querySelector("[data-win-amount]"),
   winMarket: document.querySelector("[data-win-market]"),
@@ -260,6 +266,38 @@ function checkPlayerWinPopups() {
   els.winAmount.textContent = money(freshNotice.amount);
   els.winMarket.textContent = freshNotice.marketName;
   els.winDialog.showModal();
+}
+
+function getPlayerJoinUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("mode", "player");
+  url.searchParams.delete("device");
+  return url.toString();
+}
+
+async function showPlayerQrCode() {
+  const playerUrl = getPlayerJoinUrl();
+  els.playerQrUrl.textContent = playerUrl;
+  els.playerQrFallback.hidden = true;
+  els.playerQrCode.hidden = false;
+
+  if (window.QRCode?.toCanvas) {
+    window.QRCode.toCanvas(els.playerQrCode, playerUrl, {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 260,
+      color: {
+        dark: "#0b0b0b",
+        light: "#ffffff",
+      },
+    });
+  } else {
+    els.playerQrCode.hidden = true;
+    els.playerQrFallback.hidden = false;
+    els.playerQrFallback.src = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(playerUrl)}`;
+  }
+
+  els.qrDialog.showModal();
 }
 
 function money(value) {
@@ -2092,7 +2130,20 @@ els.bonusEnabled.addEventListener("change", () => {
 });
 
 els.closeAllBetting.addEventListener("click", closeAllBetting);
+els.showPlayerQr?.addEventListener("click", showPlayerQrCode);
 els.refreshPlayerMarkets?.addEventListener("click", refreshSharedState);
+els.copyPlayerUrl?.addEventListener("click", async () => {
+  const playerUrl = getPlayerJoinUrl();
+  try {
+    await navigator.clipboard.writeText(playerUrl);
+    els.copyPlayerUrl.textContent = "Copied";
+    setTimeout(() => {
+      els.copyPlayerUrl.textContent = "Copy link";
+    }, 1200);
+  } catch {
+    els.playerQrUrl.textContent = playerUrl;
+  }
+});
 
 els.exportData.addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });

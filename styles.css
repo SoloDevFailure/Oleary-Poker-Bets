@@ -684,7 +684,8 @@ h3 {
 
 .bet-dialog,
 .confirm-dialog,
-.win-dialog {
+.win-dialog,
+.qr-dialog {
   width: min(92vw, 440px);
   border: 0;
   border-radius: 8px;
@@ -694,7 +695,8 @@ h3 {
 
 .bet-dialog::backdrop,
 .confirm-dialog::backdrop,
-.win-dialog::backdrop {
+.win-dialog::backdrop,
+.qr-dialog::backdrop {
   background: rgba(20, 16, 12, 0.45);
 }
 
@@ -713,6 +715,27 @@ h3 {
   display: grid;
   gap: 0.35rem;
   font-weight: 800;
+}
+
+.qr-card {
+  justify-items: center;
+}
+
+.qr-code {
+  width: min(70vw, 260px);
+  height: min(70vw, 260px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 0.65rem;
+}
+
+.qr-url {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
 }
 
 .win-card {

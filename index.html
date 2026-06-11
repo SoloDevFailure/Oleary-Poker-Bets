@@ -99,6 +99,7 @@
             <button type="submit">Save Session</button>
           </form>
           <div class="session-actions">
+            <button id="showPlayerQr" class="ghost" type="button">Show QR code</button>
             <button id="closeAllBetting" type="button">Close all betting</button>
           </div>
           <p class="muted session-note">Player mode will use these settings when people join the session.</p>
@@ -211,6 +212,25 @@
       </form>
     </dialog>
 
+    <dialog id="qrDialog" class="qr-dialog">
+      <form method="dialog" class="dialog-card qr-card">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Player link</p>
+            <h2>Scan to join</h2>
+          </div>
+          <button value="cancel" class="icon-button" aria-label="Close">x</button>
+        </div>
+        <canvas id="playerQrCode" class="qr-code" width="260" height="260"></canvas>
+        <img id="playerQrFallback" class="qr-code" alt="Player join QR code" hidden />
+        <p id="playerQrUrl" class="qr-url"></p>
+        <div class="dialog-actions">
+          <button id="copyPlayerUrl" class="ghost" type="button">Copy link</button>
+          <button value="ok">Done</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="winDialog" class="win-dialog">
       <form method="dialog" class="win-card">
         <div class="win-trophy" aria-hidden="true">🏆</div>
@@ -222,6 +242,7 @@
     </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
     <script src="supabase-config.js"></script>
     <script src="app.js"></script>
   </body>
