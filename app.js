@@ -21,6 +21,8 @@ const els = {
   playerForm: document.querySelector("#playerForm"),
   sessionForm: document.querySelector("#sessionForm"),
   sessionTitle: document.querySelector("#sessionTitle"),
+  defaultPlayerPoints: document.querySelector("#defaultPlayerPoints"),
+  joiningEnabled: document.querySelector("#joiningEnabled"),
   playerName: document.querySelector("#playerName"),
   startingPoints: document.querySelector("#startingPoints"),
   playersList: document.querySelector("#playersList"),
@@ -127,6 +129,7 @@ async function initSupabaseConnection() {
           title: "Oleary Poker Session",
           join_code: joinCode,
           default_player_points: Number(els.startingPoints.value) || 100,
+          joining_enabled: true,
         })
         .select("*")
         .single();
@@ -137,6 +140,9 @@ async function initSupabaseConnection() {
 
     remote.enabled = true;
     els.sessionTitle.value = remote.session.title || "";
+    els.defaultPlayerPoints.value = Number(remote.session.default_player_points ?? 100);
+    els.startingPoints.value = Number(remote.session.default_player_points ?? 100);
+    els.joiningEnabled.checked = remote.session.joining_enabled !== false;
     setSyncStatus(`Supabase connected · Session ${remote.session.join_code}`, "online");
     await loadRemoteState();
   } catch (error) {
@@ -477,16 +483,21 @@ async function saveRemotePlayer(player) {
   player.remoteId = data.id;
 }
 
-async function saveRemoteSessionTitle(title) {
+async function saveRemoteSessionSettings(settings) {
   if (!remoteReady()) return;
   const { data, error } = await remote.client
     .from("sessions")
-    .update({ title })
+    .update({
+      title: settings.title,
+      default_player_points: settings.defaultPlayerPoints,
+      joining_enabled: settings.joiningEnabled,
+    })
     .eq("id", remote.session.id)
     .select("*")
     .single();
   if (error) throw error;
   remote.session = data;
+  els.startingPoints.value = Number(remote.session.default_player_points ?? 100);
 }
 
 async function ensureRemoteOutcome(event, label) {
@@ -1469,15 +1480,18 @@ els.sessionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = els.sessionTitle.value.trim();
   if (!title) return;
+  const defaultPlayerPoints = Math.floor(Number(els.defaultPlayerPoints.value));
+  if (defaultPlayerPoints < 0 || !Number.isFinite(defaultPlayerPoints)) return;
+  const joiningEnabled = els.joiningEnabled.checked;
 
   if (remoteReady()) {
-    const saved = await runRemote(() => saveRemoteSessionTitle(title));
+    const saved = await runRemote(() => saveRemoteSessionSettings({ title, defaultPlayerPoints, joiningEnabled }));
     if (!saved) return;
   }
 
   await askConfirm({
     title: "Session saved",
-    message: `Players will see "${title}" as the session name when joining.`,
+    message: `Players will see "${title}" as the session name. New players start with ${money(defaultPlayerPoints)} points. Joining is ${joiningEnabled ? "open" : "closed"}.`,
     action: "OK",
     notice: true,
   });
@@ -1649,6 +1663,9 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => {
     activeTab = button.dataset.tab;
     localStorage.setItem("poker-night-bets-active-tab", activeTab);
+    if (activeTab === "players") {
+      els.startingPoints.value = Number(remote.session?.default_player_points ?? els.defaultPlayerPoints.value ?? 100);
+    }
     renderTabs();
   });
 });

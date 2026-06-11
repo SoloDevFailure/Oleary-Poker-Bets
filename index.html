@@ -47,11 +47,17 @@
           </div>
           <form id="sessionForm" class="event-form">
             <input id="sessionTitle" type="text" placeholder="Session name, e.g. Oleary Birthday Poker" autocomplete="off" />
+            <input id="defaultPlayerPoints" type="number" min="0" step="1" value="100" aria-label="Default player points" placeholder="Default player points" />
+            <label class="checkbox-row">
+              <input id="joiningEnabled" type="checkbox" checked />
+              Player joining open
+            </label>
             <button type="submit">Save Session</button>
           </form>
           <div class="session-actions">
             <button id="closeAllBetting" type="button">Close all betting</button>
           </div>
+          <p class="muted session-note">Player mode will use these settings when people join the session.</p>
         </section>
 
         <section id="playersPanel" class="panel leader-panel tab-panel active">

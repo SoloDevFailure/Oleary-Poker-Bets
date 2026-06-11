@@ -30,9 +30,13 @@ create table if not exists public.sessions (
   default_player_points numeric not null default 100 check (default_player_points >= 0),
   host_pin text,
   is_active boolean not null default true,
+  joining_enabled boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.sessions
+  add column if not exists joining_enabled boolean not null default true;
 
 create table if not exists public.players (
   id uuid primary key default gen_random_uuid(),

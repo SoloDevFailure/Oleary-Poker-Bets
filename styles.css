@@ -231,6 +231,10 @@ h3 {
   flex-wrap: wrap;
 }
 
+.session-note {
+  margin-top: 0.75rem;
+}
+
 .panel {
   min-width: 0;
   border: 1px solid var(--line);
