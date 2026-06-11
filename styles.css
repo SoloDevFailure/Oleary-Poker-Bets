@@ -264,6 +264,38 @@ h3 {
   margin-left: auto;
 }
 
+.social-feed {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.social-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.8rem;
+}
+
+.social-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.social-name-line {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.social-points {
+  display: grid;
+  gap: 0.15rem;
+  text-align: right;
+}
+
 .section-header {
   display: flex;
   justify-content: space-between;

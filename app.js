@@ -335,6 +335,7 @@ async function loadRemoteState() {
       startingPoints: Number(player.starting_points),
       status: player.status,
       deviceId: player.device_id,
+      createdAt: player.created_at,
       adjustments: (adjustments || [])
         .filter((adjustment) => adjustment.player_id === player.id)
         .map((adjustment) => ({
@@ -380,12 +381,15 @@ async function loadRemoteState() {
           value: Number(bet.stake),
           outcome: outcome?.label || "Unknown outcome",
           outcomeRemoteId: bet.outcome_id,
+          createdAt: bet.created_at,
+          updatedAt: bet.updated_at,
         };
       }).filter((bet) => bet.playerId),
       payouts: (payoutsByMarket.get(market.id) || []).map((payout) => ({
         id: payout.id,
         playerId: playerIdByRemoteId.get(payout.player_id),
         amount: Number(payout.amount),
+        createdAt: payout.created_at,
       })).filter((payout) => payout.playerId),
       outcomes: eventOutcomes.map((outcome) => ({
         id: outcome.client_id || outcome.id,
@@ -613,7 +617,13 @@ async function ensureRemoteOutcome(event, label) {
   if (findError) throw findError;
   if (found) {
     event.outcomes = event.outcomes || [];
-    event.outcomes.push({ id: found.client_id || found.id, remoteId: found.id, label: found.label });
+    const localOutcome = event.outcomes.find((outcome) => outcome.label.toLowerCase() === found.label.toLowerCase());
+    if (localOutcome) {
+      localOutcome.remoteId = found.id;
+      localOutcome.id = localOutcome.id || found.client_id || found.id;
+    } else {
+      event.outcomes.push({ id: found.client_id || found.id, remoteId: found.id, label: found.label });
+    }
     return found;
   }
 
@@ -630,7 +640,13 @@ async function ensureRemoteOutcome(event, label) {
 
   if (error) throw error;
   event.outcomes = event.outcomes || [];
-  event.outcomes.push({ id: outcomeClientId, remoteId: data.id, label: data.label });
+  const localOutcome = event.outcomes.find((outcome) => outcome.label.toLowerCase() === data.label.toLowerCase());
+  if (localOutcome) {
+    localOutcome.remoteId = data.id;
+    localOutcome.id = localOutcome.id || outcomeClientId;
+  } else {
+    event.outcomes.push({ id: outcomeClientId, remoteId: data.id, label: data.label });
+  }
   return data;
 }
 
@@ -782,16 +798,23 @@ function parseOutcomeLabels(value) {
 function renderOutcomeFields(labels = ["", ""]) {
   els.outcomeFields.innerHTML = labels.map((label, index) => `
     <div class="outcome-field">
-      <input data-outcome-field type="text" value="${escapeAttr(label)}" placeholder="Outcome ${index + 1}" autocomplete="off" />
+      <input data-outcome-field type="text" placeholder="Outcome ${index + 1}" autocomplete="off" />
       <button class="danger x-button" type="button" data-remove-outcome="${index}" aria-label="Remove outcome" ${labels.length <= 2 ? "disabled" : ""}>x</button>
     </div>
   `).join("");
+  document.querySelectorAll("[data-outcome-field]").forEach((input, index) => {
+    input.value = labels[index] || "";
+  });
 }
 
 function getOutcomeFieldLabels() {
   return [...new Set(Array.from(document.querySelectorAll("[data-outcome-field]"))
-    .map((input) => input.value.trim())
+    .map((input) => normalizeOutcomeLabel(input.value))
     .filter(Boolean))];
+}
+
+function normalizeOutcomeLabel(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 async function runRemote(task) {
@@ -1016,27 +1039,73 @@ function renderPlayerMarket(event, player) {
 }
 
 function renderPlayerSocial(player) {
-  const players = sortPlayers();
-  els.playerSocialList.innerHTML = players.map((item) => {
-    const recentWin = state.events.some((event) =>
-      event.status === "resolved" && getEventPayouts(event).some((payout) => payout.playerId === item.id)
-    );
-    return `
-      <article class="player-row">
-        <div class="player-main">
-          <div>
-            <div class="player-meta">
-              <h3>${escapeHtml(item.name)} ${item.id === player.id ? "(you)" : ""}</h3>
-              ${recentWin ? '<span class="star" title="Recent win">🏆</span>' : ""}
+  const rows = state.players
+    .map((item) => ({ player: item, activity: getLatestPlayerActivity(item) }))
+    .sort((a, b) => new Date(b.activity.at || 0) - new Date(a.activity.at || 0) || b.player.points - a.player.points || a.player.name.localeCompare(b.player.name));
+
+  els.playerSocialList.innerHTML = `
+    <div class="social-feed">
+      ${rows.map(({ player: item, activity }) => {
+        const reserved = getReservedByPlayer(item.id);
+        return `
+          <div class="social-row">
+            <div>
+              <div class="social-name-line">
+                <strong>${escapeHtml(item.name)}${item.id === player.id ? " (you)" : ""}</strong>
+                ${activity.type === "win" ? '<span class="star" title="Recent win">🏆</span>' : ""}
+              </div>
+              <p class="muted">${escapeHtml(activity.text)}</p>
+            </div>
+            <div class="social-points">
+              <strong>${money(item.points)}</strong>
+              <span class="muted">${money(reserved)} reserved</span>
             </div>
           </div>
-          <div class="player-points">
-            <span class="score">${money(item.points)}</span>
-          </div>
-        </div>
-      </article>
-    `;
-  }).join("");
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function getLatestPlayerActivity(player) {
+  const activities = [];
+
+  state.events.forEach((event) => {
+    const bet = event.bets.find((item) => item.playerId === player.id);
+    if (bet) {
+      activities.push({
+        type: "bet",
+        at: bet.updatedAt || bet.createdAt || event.createdAt,
+        text: `Bet ${money(bet.value)} on ${bet.outcome} in ${event.name}`,
+      });
+    }
+
+    getEventPayouts(event)
+      .filter((payout) => payout.playerId === player.id)
+      .forEach((payout) => {
+        activities.push({
+          type: "win",
+          at: payout.createdAt || event.resolvedAt || event.createdAt,
+          text: `Won ${money(payout.amount)} points in ${event.name}`,
+        });
+      });
+  });
+
+  (player.adjustments || []).forEach((adjustment) => {
+    activities.push({
+      type: adjustment.type,
+      at: adjustment.createdAt,
+      text: `${adjustment.type === "bonus" ? "Received" : "Lost"} ${money(adjustment.value)} points ${adjustment.type === "bonus" ? "bonus" : "penalty"}`,
+    });
+  });
+
+  activities.push({
+    type: "join",
+    at: player.createdAt || 0,
+    text: "Joined the session",
+  });
+
+  return activities.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))[0];
 }
 
 function getPlayerActivity(playerId) {
@@ -1766,6 +1835,13 @@ els.eventForm.addEventListener("submit", async (event) => {
   els.bonusPoints.value = "";
   renderOutcomeFields();
   els.eventName.focus();
+});
+
+els.outcomeFields.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  if (!event.target.matches("[data-outcome-field]")) return;
+  event.preventDefault();
+  event.target.blur();
 });
 
 document.addEventListener("click", (event) => {
