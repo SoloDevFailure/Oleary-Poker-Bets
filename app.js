@@ -858,7 +858,8 @@ function renderEvent(event) {
   }
 
   return `
-    <article class="event-card">
+    <article class="event-card market-card">
+      <button class="danger x-button market-remove" data-remove-event="${event.id}" aria-label="Remove market">x</button>
       <div class="event-top">
         <div>
           <div class="event-meta">
@@ -874,7 +875,6 @@ function renderEvent(event) {
           <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
           ${event.status === "open" ? `<button data-close-event="${event.id}">Close Betting</button>` : ""}
           ${event.status === "locked" ? outcomePicker : ""}
-          <button class="danger x-button market-remove" data-remove-event="${event.id}" aria-label="Remove market">x</button>
         </div>
       </div>
       <div class="event-body">

@@ -52,7 +52,9 @@ button.penalty {
 }
 
 .x-button {
+  align-self: stretch;
   min-width: 2.4rem;
+  width: 2.4rem;
   height: 2.4rem;
   padding: 0;
   text-transform: uppercase;
@@ -278,12 +280,18 @@ h3 {
   gap: 0.4rem;
 }
 
-.builder-heading,
+.builder-heading {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+
 .outcome-field,
 .bonus-fields {
   display: grid;
   gap: 0.55rem;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 2.4rem;
   align-items: center;
 }
 
@@ -489,6 +497,10 @@ h3 {
   overflow: hidden;
 }
 
+.market-card {
+  position: relative;
+}
+
 .event-card-slim {
   box-shadow: none;
 }
@@ -499,7 +511,7 @@ h3 {
   align-items: flex-start;
   flex-direction: column;
   gap: 1rem;
-  padding: 0.9rem;
+  padding: 0.9rem 3.1rem 0.9rem 0.9rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -565,7 +577,14 @@ h3 {
 }
 
 .market-remove {
-  margin-left: auto;
+  position: absolute;
+  right: 0.65rem;
+  top: 0.65rem;
+  z-index: 2;
+  min-width: 1.8rem;
+  width: 1.8rem;
+  height: 1.8rem;
+  font-size: 0.8rem;
 }
 
 .market-summary-grid {
@@ -671,7 +690,6 @@ select {
   .event-form,
   .inline-form,
   .builder-heading,
-  .outcome-field,
   .bonus-fields,
   .player-main,
   .activity-summary,
