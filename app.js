@@ -2090,28 +2090,40 @@ async function resolveEvent(eventId) {
 
   const confirmed = await askConfirm({
     title: "Confirm payout",
-    message: `Apply payouts for "${event.name}" with "${winningOutcome}" as the outcome?${bonusAwarded ? ` Bonus included: ${money(event.bonusPoints)} points.` : ""}`,
+    message: `Resolve "${event.name}" with "${winningOutcome}" as the outcome? If nobody backed it, there will be no winners and stakes stay lost.${bonusAwarded ? ` Bonus included: ${money(event.bonusPoints)} points.` : ""}`,
     action: "Apply payouts",
   });
   if (!confirmed) return;
+
+  if (!event.stakesLocked) {
+    event.bets.forEach((bet) => {
+      const player = state.players.find((item) => item.id === bet.playerId);
+      if (player) player.points -= bet.value;
+    });
+    event.stakesLocked = true;
+    event.lockedAt = event.lockedAt || new Date().toISOString();
+  }
 
   const pool = getEventPool(event);
   const taxedPool = pool * (1 - TAX_RATE);
   const winnerTotal = event.bets
     .filter((bet) => bet.outcome === winningOutcome)
     .reduce((total, bet) => total + bet.value, 0);
-  const payouts = [];
+  const payoutsByPlayer = {};
 
-  event.bets.forEach((bet) => {
-    if (bet.outcome !== winningOutcome || winnerTotal <= 0) return;
-    const player = state.players.find((item) => item.id === bet.playerId);
-    const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * (bet.value / winnerTotal) : 0;
-    const amount = (bet.value / winnerTotal) * taxedPool + bonusAmount;
-    if (player) {
-      player.points += amount;
-      payouts.push({ playerId: player.id, amount });
-    }
-  });
+  if (winnerTotal > 0) {
+    event.bets.forEach((bet) => {
+      if (bet.outcome !== winningOutcome) return;
+      const player = state.players.find((item) => item.id === bet.playerId);
+      const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * (bet.value / winnerTotal) : 0;
+      const amount = (bet.value / winnerTotal) * taxedPool + bonusAmount;
+      if (player) {
+        player.points += amount;
+        payoutsByPlayer[player.id] = (payoutsByPlayer[player.id] || 0) + amount;
+      }
+    });
+  }
+  const payouts = Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
 
   event.status = "resolved";
   event.winningOutcome = winningOutcome;
