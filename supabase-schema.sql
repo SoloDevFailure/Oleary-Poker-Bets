@@ -125,10 +125,8 @@ create table if not exists public.bets (
   updated_at timestamptz not null default now()
 );
 
--- Ground rule: one active bet per player per market.
-create unique index if not exists bets_one_active_bet_per_player_market
-  on public.bets(market_id, player_id)
-  where is_active = true;
+-- Players can place multiple active bets per market.
+drop index if exists bets_one_active_bet_per_player_market;
 
 create unique index if not exists bets_one_client_id_per_market
   on public.bets(market_id, client_id)

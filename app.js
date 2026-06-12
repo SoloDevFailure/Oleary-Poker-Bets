@@ -408,7 +408,7 @@ function getReservedByPlayer(playerId, excludedBet) {
     if (event.status !== "open") return total;
     return total + event.bets.reduce((betTotal, bet) => {
       if (bet.playerId !== playerId) return betTotal;
-      if (excludedBet && excludedBet.eventId === event.id && excludedBet.playerId === playerId) return betTotal;
+      if (excludedBet?.betId && bet.id === excludedBet.betId) return betTotal;
       return betTotal + bet.value;
     }, 0);
   }, 0);
@@ -542,12 +542,14 @@ function getEventPayouts(event) {
 
   if (winnerTotal <= 0) return [];
 
-  return event.bets
+  const payoutsByPlayer = event.bets
     .filter((bet) => bet.outcome === event.winningOutcome)
-    .map((bet) => ({
-      playerId: bet.playerId,
-      amount: (bet.value / winnerTotal) * taxedPool,
-    }));
+    .reduce((totals, bet) => {
+      totals[bet.playerId] = (totals[bet.playerId] || 0) + (bet.value / winnerTotal) * taxedPool;
+      return totals;
+    }, {});
+
+  return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
 }
 
 function remoteReady() {
@@ -971,18 +973,33 @@ async function saveRemoteBet(event, bet) {
     market_id: event.remoteId,
     player_id: player.remoteId,
     outcome_id: outcome.id,
-    client_id: `${event.id}:${player.id}`,
+    client_id: bet.id,
     stake: Number(bet.value),
     selections: [outcome.id],
     is_active: true,
   };
 
+  if (bet.remoteId) {
+    const { data, error } = await remote.client
+      .from("bets")
+      .update(payload)
+      .eq("id", bet.remoteId)
+      .select("*")
+      .maybeSingle();
+    if (error) throw error;
+    if (data) {
+      bet.remoteId = data.id;
+      bet.outcomeRemoteId = data.outcome_id;
+      return;
+    }
+    bet.remoteId = null;
+  }
+
   const { data: existing, error: findError } = await remote.client
     .from("bets")
     .select("*")
     .eq("market_id", event.remoteId)
-    .eq("player_id", player.remoteId)
-    .eq("is_active", true)
+    .eq("client_id", bet.id)
     .maybeSingle();
 
   if (findError) throw findError;
@@ -1011,16 +1028,23 @@ async function saveRemoteBet(event, bet) {
   bet.outcomeRemoteId = data.outcome_id;
 }
 
-async function deleteRemoteBet(event, playerId) {
+async function deleteRemoteBet(event, playerId, betId = null) {
   if (!remoteReady() || !event.remoteId) return;
   const player = state.players.find((item) => item.id === playerId);
   if (!player?.remoteId) return;
 
-  const { error } = await remote.client
+  let query = remote.client
     .from("bets")
     .delete()
     .eq("market_id", event.remoteId)
     .eq("player_id", player.remoteId);
+
+  if (betId) {
+    const bet = event.bets.find((item) => item.id === betId);
+    query = bet?.remoteId ? query.eq("id", bet.remoteId) : query.eq("client_id", betId);
+  }
+
+  const { error } = await query;
 
   if (error) throw error;
 }
@@ -1187,13 +1211,18 @@ async function runRemote(task) {
 
 async function placeBet(event, nextBet) {
   const previousBets = [...event.bets];
-  event.bets = event.bets.filter((item) => item.playerId !== nextBet.playerId);
-  event.bets.push(nextBet);
+  const bet = { ...nextBet, id: nextBet.id || uid(), createdAt: nextBet.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const existingIndex = event.bets.findIndex((item) => item.id === bet.id);
+  if (existingIndex >= 0) {
+    event.bets[existingIndex] = { ...event.bets[existingIndex], ...bet };
+  } else {
+    event.bets.push(bet);
+  }
   render();
 
   if (!remoteReady()) return;
 
-  const saved = await runRemote(() => saveRemoteBet(event, nextBet));
+  const saved = await runRemote(() => saveRemoteBet(event, bet));
   if (!saved) {
     event.bets = previousBets;
     await loadRemoteState();
@@ -1432,12 +1461,12 @@ function renderPlayerMarkets(player) {
     return;
   }
 
-  els.playerMarketsList.innerHTML = markets.map((event) => renderPlayerMarket(event, player)).join("");
+  els.playerMarketsList.innerHTML = sortMarketsForDisplay(markets).map((event) => renderPlayerMarket(event, player)).join("");
 }
 
 function renderPlayerMarket(event, player) {
   const pool = getEventPool(event);
-  const bet = event.bets.find((item) => item.playerId === player.id);
+  const playerBets = event.bets.filter((item) => item.playerId === player.id);
   const canBet = event.status === "open";
   const summary = getMarketSummary(event);
 
@@ -1456,11 +1485,11 @@ function renderPlayerMarket(event, player) {
             <span>Favorite: <strong>${escapeHtml(summary.favorite)}</strong></span>
           </div>
           ${renderMarketMovement(summary.movements)}
-          ${bet ? `<p class="muted">Your bet: <strong>${money(bet.value)}</strong> on <strong>${escapeHtml(bet.outcome)}</strong></p>` : '<p class="muted">You have not bet on this market.</p>'}
+          ${renderPlayerMarketBets(event, playerBets, canBet)}
         </div>
         <div class="event-actions">
           <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
-          <button ${canBet ? "" : "disabled"} data-player-bet="${event.id}">${bet ? "Edit Bet" : "Place Bet"}</button>
+          <button ${canBet ? "" : "disabled"} data-player-bet="${event.id}">Add Bet</button>
         </div>
       </div>
       <div class="event-body">
@@ -1468,6 +1497,21 @@ function renderPlayerMarket(event, player) {
         ${renderMarketOddsMenu(event, { showTotals: false })}
       </div>
     </article>
+  `;
+}
+
+function renderPlayerMarketBets(event, playerBets, canBet) {
+  if (!playerBets.length) return '<p class="muted">You have not bet on this market.</p>';
+  return `
+    <div class="player-bet-list">
+      <p class="muted">Your bets:</p>
+      ${playerBets.map((bet) => `
+        <div class="player-bet-chip">
+          <span><strong>${money(bet.value)}</strong> on <strong>${escapeHtml(bet.outcome)}</strong></span>
+          <button class="ghost mini-button" ${canBet ? "" : "disabled"} data-player-bet="${event.id}" data-bet-id="${bet.id}">Edit</button>
+        </div>
+      `).join("")}
+    </div>
   `;
 }
 
@@ -1528,12 +1572,16 @@ function getLatestPlayerActivity(player) {
   const activities = [];
 
   state.events.forEach((event) => {
-    const bet = event.bets.find((item) => item.playerId === player.id);
-    if (bet) {
+    const bets = event.bets.filter((item) => item.playerId === player.id);
+    if (bets.length) {
+      const latestBet = bets.reduce((latest, bet) => new Date(bet.updatedAt || bet.createdAt || 0) > new Date(latest.updatedAt || latest.createdAt || 0) ? bet : latest, bets[0]);
+      const total = bets.reduce((sum, bet) => sum + bet.value, 0);
       activities.push({
         type: "bet",
-        at: bet.updatedAt || bet.createdAt || event.createdAt,
-        text: `Bet ${money(bet.value)} on ${bet.outcome} in ${event.name}`,
+        at: latestBet.updatedAt || latestBet.createdAt || event.createdAt,
+        text: bets.length === 1
+          ? `Bet ${money(latestBet.value)} on ${latestBet.outcome} in ${event.name}`
+          : `Bet ${money(total)} across ${bets.length} picks in ${event.name}`,
       });
     }
 
@@ -1571,23 +1619,24 @@ function getPlayerActivity(playerId) {
   let paid = 0;
 
   state.events.forEach((event) => {
-    const bet = event.bets.find((item) => item.playerId === playerId);
-    if (!bet) return;
+    const bets = event.bets.filter((item) => item.playerId === playerId);
+    if (!bets.length) return;
 
     const payout = getEventPayouts(event)
       .filter((item) => item.playerId === playerId)
       .reduce((total, item) => total + item.amount, 0);
     const stakeCounts = event.status === "locked" || event.status === "resolved";
-    const net = event.status === "resolved" ? payout - bet.value : 0;
+    const totalStake = bets.reduce((total, bet) => total + bet.value, 0);
+    const net = event.status === "resolved" ? payout - totalStake : 0;
 
-    if (stakeCounts) staked += bet.value;
+    if (stakeCounts) staked += totalStake;
     if (event.status === "resolved") paid += payout;
 
     rows.push(`
       <div class="activity-row">
         <div>
           <strong>${escapeHtml(event.name)}</strong>
-          <span class="muted">${money(bet.value)} on ${escapeHtml(bet.outcome)}</span>
+          <span class="muted">${bets.map((bet) => `${money(bet.value)} on ${escapeHtml(bet.outcome)}`).join(" · ")}</span>
         </div>
         <span class="pill ${event.status}">${event.status === "resolved" ? `${net >= 0 ? "+" : ""}${money(net)}` : event.status}</span>
       </div>
@@ -1603,7 +1652,16 @@ function renderEvents() {
     return;
   }
 
-  els.eventsList.innerHTML = state.events.map((event) => renderEvent(event)).join("");
+  els.eventsList.innerHTML = sortMarketsForDisplay(state.events).map((event) => renderEvent(event)).join("");
+}
+
+function sortMarketsForDisplay(markets) {
+  return [...markets].sort((a, b) => {
+    const aResolved = a.status === "resolved" || a.status === "voided";
+    const bResolved = b.status === "resolved" || b.status === "voided";
+    if (aResolved !== bResolved) return aResolved ? 1 : -1;
+    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+  });
 }
 
 function renderEvent(event) {
@@ -1729,8 +1787,10 @@ function renderCollapsedResult(event) {
 }
 
 function renderBetRow(event, player) {
-  const bet = event.bets.find((item) => item.playerId === player.id);
-  const detail = bet ? `${money(bet.value)} on ${escapeHtml(bet.outcome)}` : "No bet yet";
+  const bets = event.bets.filter((item) => item.playerId === player.id);
+  const detail = bets.length
+    ? bets.map((bet) => `${money(bet.value)} on ${escapeHtml(bet.outcome)}`).join(" · ")
+    : "No bet yet";
   const canEdit = event.status === "open";
 
   return `
@@ -1739,9 +1799,12 @@ function renderBetRow(event, player) {
         <span class="bet-name">${escapeHtml(player.name)}</span>
         <span class="muted">${detail}</span>
       </div>
-      <button ${canEdit ? "" : "disabled"} data-open-bet="${event.id}" data-player-id="${player.id}">
-        ${bet ? "Edit" : "Place Bet"}
-      </button>
+      <div class="bet-row-actions">
+        ${bets.map((bet, index) => `
+          <button class="ghost mini-button" ${canEdit ? "" : "disabled"} data-open-bet="${event.id}" data-player-id="${player.id}" data-bet-id="${bet.id}">Edit ${index + 1}</button>
+        `).join("")}
+        <button ${canEdit ? "" : "disabled"} data-open-bet="${event.id}" data-player-id="${player.id}">Add Bet</button>
+      </div>
     </div>
   `;
 }
@@ -2162,14 +2225,14 @@ async function adjustPlayer(playerId, type) {
   });
 }
 
-function openBetDialog(eventId, playerId) {
+function openBetDialog(eventId, playerId, betId = null) {
   const event = state.events.find((item) => item.id === eventId);
   const player = state.players.find((item) => item.id === playerId);
   if (!event || !player || event.status !== "open") return;
 
-  const existingBet = event.bets.find((item) => item.playerId === playerId);
-  const excludedBet = { eventId, playerId };
-  const available = getAvailablePoints(playerId, excludedBet) + (existingBet?.value || 0);
+  const existingBet = betId ? event.bets.find((item) => item.id === betId && item.playerId === playerId) : null;
+  const excludedBet = existingBet ? { betId: existingBet.id } : null;
+  const available = getAvailablePoints(playerId, excludedBet);
   const fragment = els.betDialogTemplate.content.cloneNode(true);
   const dialog = fragment.querySelector("dialog");
   const valueInput = fragment.querySelector("[data-bet-value]");
@@ -2218,15 +2281,17 @@ function openBetDialog(eventId, playerId) {
       const value = Math.floor(Number(valueInput.value));
       const outcome = outcomeChoice.value;
       if (value > 0 && value <= available && outcome) {
-        const nextBet = { playerId, value, outcome };
+        const nextBet = { ...(existingBet || {}), playerId, value, outcome };
         placeBet(event, nextBet);
       }
     }
 
     if (dialog.returnValue === "remove") {
-      event.bets = event.bets.filter((item) => item.playerId !== playerId);
+      if (existingBet) {
+        event.bets = event.bets.filter((item) => item.id !== existingBet.id);
+      }
       render();
-      runRemote(() => deleteRemoteBet(event, playerId));
+      runRemote(() => deleteRemoteBet(event, playerId, existingBet?.id || null));
     }
 
     dialog.remove();
@@ -2403,7 +2468,7 @@ document.addEventListener("click", (event) => {
   const refreshMarketButton = event.target.closest("[data-refresh-market]");
   const playerBetButton = event.target.closest("[data-player-bet]");
 
-  if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId);
+  if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId, openBet.dataset.betId || null);
   if (closeButton) closeEvent(closeButton.dataset.closeEvent);
   if (resolveButton) resolveEvent(resolveButton.dataset.resolveEvent);
   if (voidButton) voidEvent(voidButton.dataset.voidEvent);
@@ -2417,7 +2482,7 @@ document.addEventListener("click", (event) => {
   if (refreshMarketButton) refreshMarketButtonState(refreshMarketButton);
   if (playerBetButton) {
     const player = getCurrentPlayer();
-    if (player) openPlayerBetDialog(playerBetButton.dataset.playerBet, player.id);
+    if (player) openPlayerBetDialog(playerBetButton.dataset.playerBet, player.id, playerBetButton.dataset.betId || null);
   }
   if (removeOutcomeButton) {
     const outcomes = getOutcomeFieldDraftItems();
@@ -2512,7 +2577,7 @@ els.resetProfiles?.addEventListener("click", async () => {
   saveState();
 });
 
-async function openPlayerBetDialog(eventId, playerId) {
+async function openPlayerBetDialog(eventId, playerId, betId = null) {
   if (remoteReady()) {
     try {
       await loadRemoteState();
@@ -2532,7 +2597,7 @@ async function openPlayerBetDialog(eventId, playerId) {
     return;
   }
 
-  openBetDialog(eventId, playerId);
+  openBetDialog(eventId, playerId, betId);
 }
 
 els.playerJoinForm.addEventListener("submit", async (event) => {

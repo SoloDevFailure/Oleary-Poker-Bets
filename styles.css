@@ -540,6 +540,37 @@ h3 {
   margin-top: 0.35rem;
 }
 
+.bet-row-actions,
+.player-bet-list {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.player-bet-list {
+  margin-top: 0.45rem;
+}
+
+.player-bet-list > .muted {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.player-bet-chip {
+  align-items: center;
+  background: var(--soft);
+  border-radius: 8px;
+  display: flex;
+  gap: 0.45rem;
+  justify-content: space-between;
+  padding: 0.35rem 0.45rem;
+}
+
+.mini-button {
+  min-height: 2rem;
+  padding: 0.35rem 0.55rem;
+}
+
 .activity-row {
   display: flex;
   align-items: center;
