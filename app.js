@@ -954,18 +954,21 @@ async function saveRemoteBet(event, bet) {
 
   const player = state.players.find((item) => item.id === bet.playerId);
   if (!player) return;
+  bet.id = bet.id || uid();
 
   if (!player.remoteId) await saveRemotePlayer(player);
   if (!event.remoteId) await saveRemoteMarket(event);
-  const { data: latestMarket, error: marketError } = await remote.client
-    .from("markets")
-    .select("status")
-    .eq("id", event.remoteId)
-    .single();
-  if (marketError) throw marketError;
-  if (latestMarket.status !== "open") {
-    event.status = latestMarket.status;
-    throw new Error("Cannot place bet. Market has closed.");
+  if (event.status === "open") {
+    const { data: latestMarket, error: marketError } = await remote.client
+      .from("markets")
+      .select("status")
+      .eq("id", event.remoteId)
+      .single();
+    if (marketError) throw marketError;
+    if (latestMarket.status !== "open") {
+      event.status = latestMarket.status;
+      throw new Error("Cannot place bet. Market has closed.");
+    }
   }
   const outcome = await ensureRemoteOutcome(event, bet.outcome);
 
