@@ -1439,6 +1439,7 @@ function renderPlayerMarket(event, player) {
   const pool = getEventPool(event);
   const bet = event.bets.find((item) => item.playerId === player.id);
   const canBet = event.status === "open";
+  const summary = getMarketSummary(event);
 
   return `
     <article class="event-card">
@@ -1450,6 +1451,11 @@ function renderPlayerMarket(event, player) {
             ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus available</span>' : ""}
           </div>
           <p class="muted">Pool: ${money(pool)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
+          <div class="market-quick-info">
+            <span><strong>${summary.totalBets}</strong> bet${summary.totalBets === 1 ? "" : "s"} placed</span>
+            <span>Favorite: <strong>${escapeHtml(summary.favorite)}</strong></span>
+          </div>
+          ${renderMarketMovement(summary.movements)}
           ${bet ? `<p class="muted">Your bet: <strong>${money(bet.value)}</strong> on <strong>${escapeHtml(bet.outcome)}</strong></p>` : '<p class="muted">You have not bet on this market.</p>'}
         </div>
         <div class="event-actions">
@@ -1462,6 +1468,20 @@ function renderPlayerMarket(event, player) {
         ${renderMarketOddsMenu(event, { showTotals: false })}
       </div>
     </article>
+  `;
+}
+
+function renderMarketMovement(movements) {
+  if (!movements.length) return '<p class="muted compact-line">Market Movement: Waiting for bets</p>';
+  return `
+    <div class="market-movement">
+      <span class="muted">Market Movement:</span>
+      ${movements.map((item) => `
+        <span class="movement ${item.direction}">
+          ${escapeHtml(item.outcome)} ${item.direction === "up" ? "&uarr;" : "&darr;"}
+        </span>
+      `).join("")}
+    </div>
   `;
 }
 
@@ -1592,6 +1612,7 @@ function renderEvent(event) {
   const canCollapse = event.status === "resolved" || event.status === "voided";
   const isCollapsed = canCollapse && collapsedEvents.has(event.id);
   const marketSummary = renderMarketSummary(event);
+  const quickSummary = getMarketSummary(event);
   const oddsMenu = renderMarketOddsMenu(event);
   const outcomePicker = renderOutcomePicker(event);
 
@@ -1623,6 +1644,11 @@ function renderEvent(event) {
             ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus points available</span>' : ""}
           </div>
           <p class="muted">Pool: ${money(pool)} · Tax: ${money(pool * TAX_RATE)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
+          <div class="market-quick-info">
+            <span><strong>${quickSummary.totalBets}</strong> bet${quickSummary.totalBets === 1 ? "" : "s"} placed</span>
+            <span>Favorite: <strong>${escapeHtml(quickSummary.favorite)}</strong></span>
+          </div>
+          ${renderMarketMovement(quickSummary.movements)}
           ${event.seedPool > 0 ? `<p class="muted">Seeded odds: <strong>${escapeHtml(event.profileMarketType || "Custom")}</strong> · ${money(event.seedPool)} virtual liquidity</p>` : ""}
           ${event.bonusPoints > 0 ? `<p class="muted">Bonus: <strong>${money(event.bonusPoints)}</strong> points · ${escapeHtml(event.bonusLabel || "Host-triggered bonus")}</p>` : ""}
         </div>
@@ -1791,15 +1817,56 @@ function getDisplayProfitPerPoint(event, oddsItem) {
     return oddsItem?.profitPerPoint || 0;
   }
 
+  const realPool = getEventPool(event);
+  const seedPool = getSeedPool(event);
   const seededOdds = getOdds(event).filter((item) => Number(item.seedTotal || 0) > 0);
-  const probabilities = seededOdds.map((item) => Number(item.seedTotal || 0) / getSeedPool(event));
+  const probabilities = seededOdds.map((item) => Number(item.seedTotal || 0) / seedPool);
   const maxProbability = Math.max(...probabilities);
   const minProbability = Math.min(...probabilities);
-  const probability = Number(oddsItem.seedTotal || 0) / getSeedPool(event);
+  const probability = Number(oddsItem.seedTotal || 0) / seedPool;
 
-  if (!Number.isFinite(probability) || maxProbability === minProbability) return 3;
-  const longshotScale = (maxProbability - probability) / (maxProbability - minProbability);
-  return 1 + longshotScale * 4;
+  const seededDisplay = Number.isFinite(probability) && maxProbability !== minProbability
+    ? 1 + ((maxProbability - probability) / (maxProbability - minProbability)) * 4
+    : 3;
+  const liveWeight = realPool > 0 ? Math.min(0.85, realPool / (realPool + seedPool)) : 0;
+  return seededDisplay * (1 - liveWeight) + (oddsItem.profitPerPoint || 0) * liveWeight;
+}
+
+function getMarketSummary(event) {
+  const odds = getOdds(event);
+  const totalBets = event.bets.length;
+  const favorite = odds
+    .filter((item) => item.total > 0)
+    .sort((a, b) => getDisplayProfitPerPoint(event, a) - getDisplayProfitPerPoint(event, b))[0];
+  const movements = getMarketMovements(event, odds);
+
+  return {
+    totalBets,
+    favorite: favorite?.outcome || "No favorite yet",
+    movements,
+  };
+}
+
+function getMarketMovements(event, odds = getOdds(event)) {
+  const realPool = getEventPool(event);
+  if (realPool <= 0) return [];
+
+  const seedPool = getSeedPool(event);
+  return odds
+    .filter((item) => item.realTotal > 0 || item.seedTotal > 0)
+    .map((item) => {
+      const seedShare = seedPool > 0 ? item.seedTotal / seedPool : 1 / Math.max(1, odds.length);
+      const realShare = item.realTotal / realPool;
+      const movement = realShare - seedShare;
+      return {
+        outcome: item.outcome,
+        direction: movement >= 0 ? "up" : "down",
+        strength: Math.abs(movement),
+      };
+    })
+    .filter((item) => item.strength > 0.02)
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 3);
 }
 
 async function addPlayer(name, points) {
@@ -2122,6 +2189,7 @@ function openBetDialog(eventId, playerId) {
   }
 
   fragment.querySelector("[data-player-name]").textContent = player.name;
+  fragment.querySelector("[data-market-name]").textContent = event.name;
   fragment.querySelector("[data-available]").textContent = `${money(available)} points available for this bet.`;
   valueInput.max = available;
   valueInput.value = existingBet?.value || "";

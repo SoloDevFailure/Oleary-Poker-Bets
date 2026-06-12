@@ -694,6 +694,37 @@ h3 {
   flex-wrap: wrap;
 }
 
+.market-quick-info,
+.market-movement {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.market-quick-info span,
+.movement {
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 0.86rem;
+  padding: 0.28rem 0.5rem;
+}
+
+.movement.up {
+  background: #dff1e8;
+  color: var(--accent);
+}
+
+.movement.down {
+  background: #f3e8dc;
+  color: #7f5539;
+}
+
+.compact-line {
+  margin-top: 0.35rem;
+}
+
 .market-remove {
   position: absolute;
   right: 0.65rem;
