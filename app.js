@@ -1,6 +1,22 @@
 const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
 const PLAYER_MARKETS_REFRESH_MS = 10000;
+const DEFAULT_SEED_POOL = 300;
+const MARKET_TYPES = ["Winner", "TopThree", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
+const PROFILE_STATS = ["skill", "survivability", "volatility", "consistency", "recentForm", "aggression"];
+const DEFAULT_PLAYER_PROFILES = [
+  { playerId: "dan", playerName: "Dan", skill: 92, survivability: 88, volatility: 28, consistency: 92, recentForm: 88, aggression: 70 },
+  { playerId: "dave", playerName: "Dave", skill: 90, survivability: 76, volatility: 72, consistency: 76, recentForm: 86, aggression: 88 },
+  { playerId: "chris", playerName: "Chris", skill: 88, survivability: 82, volatility: 42, consistency: 84, recentForm: 80, aggression: 68 },
+  { playerId: "wes", playerName: "Wes", skill: 86, survivability: 78, volatility: 76, consistency: 68, recentForm: 84, aggression: 78 },
+  { playerId: "jamie", playerName: "Jamie", skill: 86, survivability: 72, volatility: 82, consistency: 62, recentForm: 92, aggression: 82 },
+  { playerId: "jeremy", playerName: "Jeremy", skill: 80, survivability: 88, volatility: 32, consistency: 78, recentForm: 74, aggression: 52 },
+  { playerId: "tom", playerName: "Tom", skill: 78, survivability: 70, volatility: 74, consistency: 58, recentForm: 66, aggression: 72 },
+  { playerId: "nic", playerName: "Nic", skill: 76, survivability: 72, volatility: 52, consistency: 66, recentForm: 62, aggression: 60 },
+  { playerId: "aaron", playerName: "Aaron", skill: 72, survivability: 58, volatility: 84, consistency: 46, recentForm: 58, aggression: 78 },
+  { playerId: "fletcher", playerName: "Fletcher", skill: 70, survivability: 64, volatility: 66, consistency: 52, recentForm: 60, aggression: 64 },
+  { playerId: "ben", playerName: "Ben", skill: 68, survivability: 62, volatility: 68, consistency: 50, recentForm: 56, aggression: 62 },
+];
 
 const state = loadState();
 const params = new URLSearchParams(window.location.search);
@@ -44,8 +60,10 @@ const els = {
   playersList: document.querySelector("#playersList"),
   eventForm: document.querySelector("#eventForm"),
   eventName: document.querySelector("#eventName"),
+  marketType: document.querySelector("#marketType"),
   outcomeFields: document.querySelector("#outcomeFields"),
   addOutcome: document.querySelector("#addOutcome"),
+  populateDefaultPlayers: document.querySelector("#populateDefaultPlayers"),
   bonusEnabled: document.querySelector("#bonusEnabled"),
   bonusFields: document.querySelector("#bonusFields"),
   bonusLabel: document.querySelector("#bonusLabel"),
@@ -72,9 +90,15 @@ const els = {
   refreshPlayerMarkets: document.querySelector("#refreshPlayerMarkets"),
   playerSocialList: document.querySelector("#playerSocialList"),
   playersTab: document.querySelector("#playersTab"),
+  profilesTab: document.querySelector("#profilesTab"),
+  createMarketTab: document.querySelector("#createMarketTab"),
   eventsTab: document.querySelector("#eventsTab"),
   sessionTab: document.querySelector("#sessionTab"),
   playersPanel: document.querySelector("#playersPanel"),
+  profilesPanel: document.querySelector("#profilesPanel"),
+  createMarketPanel: document.querySelector("#createMarketPanel"),
+  profilesList: document.querySelector("#profilesList"),
+  resetProfiles: document.querySelector("#resetProfiles"),
   eventsPanel: document.querySelector("#eventsPanel"),
   sessionPanel: document.querySelector("#sessionPanel"),
   showPlayerQr: document.querySelector("#showPlayerQr"),
@@ -104,14 +128,67 @@ function uid() {
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) {
-    return { players: [], events: [] };
+    return normalizeState({ players: [], events: [] });
   }
 
   try {
-    return JSON.parse(saved);
+    return normalizeState(JSON.parse(saved));
   } catch {
-    return { players: [], events: [] };
+    return normalizeState({ players: [], events: [] });
   }
+}
+
+function cloneDefaultProfiles() {
+  return DEFAULT_PLAYER_PROFILES.map((profile) => ({ ...profile }));
+}
+
+function normalizeState(rawState) {
+  const nextState = rawState && typeof rawState === "object" ? rawState : {};
+  nextState.players = Array.isArray(nextState.players) ? nextState.players : [];
+  nextState.events = Array.isArray(nextState.events) ? nextState.events : [];
+  const savedProfiles = Array.isArray(nextState.playerProfiles) ? nextState.playerProfiles : [];
+  const profilesById = new Map(savedProfiles.map((profile) => [profile.playerId, profile]));
+  nextState.playerProfiles = cloneDefaultProfiles().map((profile) => normalizeProfile({
+    ...profile,
+    ...(profilesById.get(profile.playerId) || {}),
+  }));
+  savedProfiles
+    .filter((profile) => profile?.playerId && !nextState.playerProfiles.some((item) => item.playerId === profile.playerId))
+    .forEach((profile) => nextState.playerProfiles.push(normalizeProfile(profile)));
+  nextState.events.forEach((event) => {
+    event.outcomes = Array.isArray(event.outcomes) ? event.outcomes.map(normalizeOutcome) : [];
+    event.seedPool = Number(event.seedPool || 0);
+    event.profileMarketType = MARKET_TYPES.includes(event.profileMarketType) ? event.profileMarketType : "Custom";
+  });
+  return nextState;
+}
+
+function normalizeProfile(profile) {
+  const playerName = String(profile.playerName || profile.name || "Player").trim();
+  const playerId = String(profile.playerId || playerName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || uid());
+  return PROFILE_STATS.reduce((result, stat) => {
+    result[stat] = clampNumber(profile[stat], 0, 100);
+    return result;
+  }, { playerId, playerName });
+}
+
+function normalizeOutcome(outcome) {
+  if (typeof outcome === "string") return { id: uid(), label: outcome };
+  return {
+    ...outcome,
+    id: outcome.id || uid(),
+    label: outcome.label || "",
+    weight: Number(outcome.weight || 0),
+    probability: Number(outcome.probability || 0),
+    seedLiquidity: Number(outcome.seedLiquidity || 0),
+    profileId: outcome.profileId || null,
+  };
+}
+
+function clampNumber(value, min, max) {
+  const number = Math.round(Number(value));
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, number));
 }
 
 function saveState() {
@@ -329,9 +406,21 @@ function getEventPool(event) {
   return event.bets.reduce((total, bet) => total + bet.value, 0);
 }
 
+function getSeedPool(event) {
+  return (event.outcomes || []).reduce((total, outcome) => total + Number(outcome.seedLiquidity || 0), 0);
+}
+
 function getOutcomeTotals(event) {
   return event.bets.reduce((totals, bet) => {
     totals[bet.outcome] = (totals[bet.outcome] || 0) + bet.value;
+    return totals;
+  }, {});
+}
+
+function getSeedOutcomeTotals(event) {
+  return (event.outcomes || []).reduce((totals, outcome) => {
+    if (!outcome.label) return totals;
+    totals[outcome.label] = (totals[outcome.label] || 0) + Number(outcome.seedLiquidity || 0);
     return totals;
   }, {});
 }
@@ -343,17 +432,60 @@ function getEventOutcomes(event) {
 }
 
 function getOdds(event) {
-  const pool = getEventPool(event);
+  const realPool = getEventPool(event);
+  const seedPool = getSeedPool(event);
+  const pool = realPool + seedPool;
   const taxedPool = pool * (1 - TAX_RATE);
   const outcomeTotals = getOutcomeTotals(event);
+  const seedTotals = getSeedOutcomeTotals(event);
+  const outcomes = getEventOutcomes(event);
 
-  return Object.entries(outcomeTotals)
-    .map(([outcome, total]) => {
-      const returnPerPoint = total > 0 ? taxedPool / total : 0;
+  return outcomes
+    .map((outcome) => {
+      const realTotal = outcomeTotals[outcome] || 0;
+      const seedTotal = seedTotals[outcome] || 0;
+      const total = realTotal + seedTotal;
+      const returnPerPoint = total > 0 && pool > 0 ? taxedPool / total : 0;
       const profitPerPoint = returnPerPoint - 1;
-      return { outcome, total, returnPerPoint, profitPerPoint };
+      return { outcome, total, realTotal, seedTotal, returnPerPoint, profitPerPoint };
     })
     .sort((a, b) => a.outcome.localeCompare(b.outcome));
+}
+
+function getProfileWeight(profile, marketType) {
+  switch (marketType) {
+    case "Winner":
+      return profile.skill * 0.45 + profile.survivability * 0.25 + profile.recentForm * 0.20 + profile.aggression * 0.10;
+    case "TopThree":
+    case "LastLonger":
+      return profile.survivability * 0.40 + profile.consistency * 0.30 + profile.skill * 0.20 + profile.recentForm * 0.10;
+    case "FirstOut":
+      return (100 - profile.survivability) * 0.45 + profile.volatility * 0.30 + (100 - profile.consistency) * 0.20 + profile.aggression * 0.05;
+    case "Knockout":
+      return profile.aggression * 0.40 + profile.skill * 0.30 + profile.volatility * 0.20 + profile.recentForm * 0.10;
+    case "Chaos":
+      return profile.volatility * 0.50 + profile.aggression * 0.30 + (100 - profile.consistency) * 0.20;
+    case "Custom":
+    default:
+      return 1;
+  }
+}
+
+function buildSeededOutcomes(marketType, profiles = state.playerProfiles) {
+  const weights = profiles.map((profile) => Math.max(0.01, getProfileWeight(profile, marketType)));
+  const totalWeight = weights.reduce((total, weight) => total + weight, 0) || 1;
+  return profiles.map((profile, index) => {
+    const weight = weights[index];
+    const probability = weight / totalWeight;
+    return {
+      id: uid(),
+      label: profile.playerName,
+      profileId: profile.playerId,
+      weight,
+      probability,
+      seedLiquidity: DEFAULT_SEED_POOL * probability,
+    };
+  });
 }
 
 function getEventPayouts(event) {
@@ -445,6 +577,8 @@ async function loadRemoteState() {
 
   state.events = (markets || []).map((market) => {
     const eventOutcomes = outcomesByMarket.get(market.id) || [];
+    const selection = market.winning_selection || {};
+    const seededByLabel = new Map((selection.seeded_outcomes || []).map((outcome) => [String(outcome.label || "").toLowerCase(), outcome]));
     const winningOutcome = market.winning_outcome_id
       ? outcomesById.get(market.winning_outcome_id)?.label
       : market.status === "voided" ? "Voided / refunded" : null;
@@ -459,7 +593,9 @@ async function loadRemoteState() {
       taxRate: Number(market.tax_rate),
       bonusPoints: Number(market.bonus_points),
       bonusLabel: market.bonus_label,
-      bonusAwarded: Boolean(market.winning_selection?.bonus_awarded),
+      bonusAwarded: Boolean(selection.bonus_awarded),
+      profileMarketType: selection.market_type || "Custom",
+      seedPool: Number(selection.seed_pool || 0),
       winningOutcome,
       createdAt: market.created_at,
       lockedAt: market.locked_at,
@@ -484,11 +620,18 @@ async function loadRemoteState() {
         amount: Number(payout.amount),
         createdAt: payout.created_at,
       })).filter((payout) => payout.playerId),
-      outcomes: eventOutcomes.map((outcome) => ({
-        id: outcome.client_id || outcome.id,
-        remoteId: outcome.id,
-        label: outcome.label,
-      })),
+      outcomes: eventOutcomes.map((outcome) => {
+        const seeded = seededByLabel.get(String(outcome.label || "").toLowerCase()) || {};
+        return {
+          id: outcome.client_id || outcome.id,
+          remoteId: outcome.id,
+          label: outcome.label,
+          profileId: seeded.profile_id || null,
+          weight: Number(seeded.weight || 0),
+          probability: Number(seeded.probability || 0),
+          seedLiquidity: Number(seeded.seed_liquidity || 0),
+        };
+      }),
     };
   });
 
@@ -517,6 +660,7 @@ function groupBy(items, key) {
 async function saveRemoteMarket(event) {
   if (!remoteReady()) return;
 
+  const winningSelection = buildWinningSelectionPayload(event);
   const payload = {
     session_id: remote.session.id,
     client_id: event.id,
@@ -531,7 +675,7 @@ async function saveRemoteMarket(event) {
     locked_at: event.status === "locked" && !event.lockedAt ? new Date().toISOString() : event.lockedAt || null,
     resolved_at: event.status === "resolved" ? event.resolvedAt || new Date().toISOString() : null,
     voided_at: event.status === "voided" ? event.voidedAt || new Date().toISOString() : null,
-    winning_selection: event.bonusAwarded ? { bonus_awarded: true } : event.status === "resolved" ? { bonus_awarded: false } : null,
+    winning_selection: winningSelection,
   };
 
   payload.winning_outcome_id = null;
@@ -549,7 +693,7 @@ async function saveRemoteMarket(event) {
         const outcome = await ensureRemoteOutcome(event, event.winningOutcome);
         const { error: winningError } = await remote.client
           .from("markets")
-          .update({ winning_outcome_id: outcome.id, winning_selection: payload.winning_selection })
+          .update({ winning_outcome_id: outcome.id, winning_selection: buildWinningSelectionPayload(event) })
           .eq("id", event.remoteId);
         if (winningError) throw winningError;
       }
@@ -557,7 +701,7 @@ async function saveRemoteMarket(event) {
     }
     event.remoteId = null;
     payload.winning_outcome_id = null;
-    payload.winning_selection = null;
+    payload.winning_selection = buildWinningSelectionPayload(event);
     event.outcomes = (event.outcomes || []).map((outcome) => ({ ...outcome, remoteId: null }));
   }
 
@@ -573,10 +717,31 @@ async function saveRemoteMarket(event) {
     const outcome = await ensureRemoteOutcome(event, event.winningOutcome);
     const { error: winningError } = await remote.client
       .from("markets")
-      .update({ winning_outcome_id: outcome.id, winning_selection: payload.winning_selection })
+      .update({ winning_outcome_id: outcome.id, winning_selection: buildWinningSelectionPayload(event) })
       .eq("id", event.remoteId);
     if (winningError) throw winningError;
   }
+}
+
+function buildWinningSelectionPayload(event) {
+  const seededOutcomes = (event.outcomes || [])
+    .filter((outcome) => Number(outcome.weight || 0) > 0 || Number(outcome.seedLiquidity || 0) > 0)
+    .map((outcome) => ({
+      label: outcome.label,
+      profile_id: outcome.profileId || null,
+      weight: Number(outcome.weight || 0),
+      probability: Number(outcome.probability || 0),
+      seed_liquidity: Number(outcome.seedLiquidity || 0),
+    }));
+  const payload = {
+    market_type: event.profileMarketType || "Custom",
+    seed_pool: Number(event.seedPool || 0),
+    seeded_outcomes: seededOutcomes,
+  };
+  if (event.status === "resolved" || event.bonusAwarded !== undefined) {
+    payload.bonus_awarded = Boolean(event.bonusAwarded);
+  }
+  return payload;
 }
 
 async function saveRemotePlayer(player) {
@@ -900,22 +1065,67 @@ function parseOutcomeLabels(value) {
     .filter(Boolean))];
 }
 
-function renderOutcomeFields(labels = ["", ""]) {
-  els.outcomeFields.innerHTML = labels.map((label, index) => `
+function renderOutcomeFields(items = ["", ""]) {
+  const outcomes = items.map(normalizeOutcome);
+  els.outcomeFields.innerHTML = outcomes.map((outcome, index) => `
     <div class="outcome-field">
-      <input data-outcome-field type="text" placeholder="Outcome ${index + 1}" autocomplete="off" />
-      <button class="danger x-button" type="button" data-remove-outcome="${index}" aria-label="Remove outcome" ${labels.length <= 2 ? "disabled" : ""}>x</button>
+      <input
+        data-outcome-field
+        data-profile-id="${escapeAttr(outcome.profileId || "")}"
+        data-outcome-weight="${Number(outcome.weight || 0)}"
+        data-outcome-probability="${Number(outcome.probability || 0)}"
+        data-seed-liquidity="${Number(outcome.seedLiquidity || 0)}"
+        type="text"
+        placeholder="Outcome ${index + 1}"
+        autocomplete="off"
+      />
+      <button class="danger x-button" type="button" data-remove-outcome="${index}" aria-label="Remove outcome" ${outcomes.length <= 2 ? "disabled" : ""}>x</button>
+      ${outcome.seedLiquidity > 0 ? `<span class="seed-note">${money(outcome.probability * 100)}% seed · ${money(outcome.seedLiquidity)} virtual</span>` : ""}
     </div>
   `).join("");
   document.querySelectorAll("[data-outcome-field]").forEach((input, index) => {
-    input.value = labels[index] || "";
+    input.value = outcomes[index]?.label || "";
   });
 }
 
 function getOutcomeFieldLabels() {
-  return [...new Set(Array.from(document.querySelectorAll("[data-outcome-field]"))
-    .map((input) => normalizeOutcomeLabel(input.value))
+  return [...new Set(getOutcomeFieldItems()
+    .map((outcome) => normalizeOutcomeLabel(outcome.label))
     .filter(Boolean))];
+}
+
+function getOutcomeFieldItems() {
+  const seen = new Set();
+  return Array.from(document.querySelectorAll("[data-outcome-field]"))
+    .map((input) => {
+      const label = normalizeOutcomeLabel(input.value);
+      if (!label) return null;
+      const key = label.toLowerCase();
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return {
+        id: uid(),
+        label,
+        profileId: input.dataset.profileId || null,
+        weight: Number(input.dataset.outcomeWeight || 0),
+        probability: Number(input.dataset.outcomeProbability || 0),
+        seedLiquidity: Number(input.dataset.seedLiquidity || 0),
+      };
+    })
+    .filter(Boolean);
+}
+
+function getOutcomeFieldDraftItems() {
+  const inputs = Array.from(document.querySelectorAll("[data-outcome-field]"));
+  if (!inputs.length) return ["", ""];
+  return inputs.map((input) => ({
+    id: uid(),
+    label: normalizeOutcomeLabel(input.value),
+    profileId: input.dataset.profileId || null,
+    weight: Number(input.dataset.outcomeWeight || 0),
+    probability: Number(input.dataset.outcomeProbability || 0),
+    seedLiquidity: Number(input.dataset.seedLiquidity || 0),
+  }));
 }
 
 function normalizeOutcomeLabel(value) {
@@ -964,6 +1174,7 @@ function render() {
   renderMode();
   renderTabs();
   renderPlayers();
+  renderProfiles();
   renderEvents();
   renderPlayerMode();
 }
@@ -975,6 +1186,8 @@ function renderMode() {
   els.playerTabs.hidden = !isPlayer || !getCurrentPlayer();
   els.sessionPanel.hidden = isPlayer;
   els.playersPanel.hidden = isPlayer;
+  els.profilesPanel.hidden = isPlayer;
+  els.createMarketPanel.hidden = isPlayer;
   els.eventsPanel.hidden = isPlayer;
   els.playerJoinPanel.hidden = !isPlayer || Boolean(getCurrentPlayer());
   els.playerProfilePanel.hidden = !isPlayer || !getCurrentPlayer();
@@ -992,12 +1205,18 @@ function renderTabs() {
   }
   const showSession = activeTab === "session";
   const showPlayers = activeTab === "players";
+  const showProfiles = activeTab === "profiles";
+  const showCreateMarket = activeTab === "createMarket";
   const showEvents = activeTab === "events";
   els.sessionTab.classList.toggle("active", showSession);
   els.playersTab.classList.toggle("active", showPlayers);
+  els.profilesTab.classList.toggle("active", showProfiles);
+  els.createMarketTab.classList.toggle("active", showCreateMarket);
   els.eventsTab.classList.toggle("active", showEvents);
   els.sessionPanel.classList.toggle("active", showSession);
   els.playersPanel.classList.toggle("active", showPlayers);
+  els.profilesPanel.classList.toggle("active", showProfiles);
+  els.createMarketPanel.classList.toggle("active", showCreateMarket);
   els.eventsPanel.classList.toggle("active", showEvents);
 }
 
@@ -1082,6 +1301,29 @@ function renderPlayerDetails(player) {
   `;
 }
 
+function renderProfiles() {
+  if (!els.profilesList) return;
+  els.profilesList.innerHTML = state.playerProfiles.map((profile) => `
+    <article class="profile-row">
+      <div class="profile-name">
+        <input data-profile-name="${profile.playerId}" type="text" value="${escapeAttr(profile.playerName)}" aria-label="Profile name" />
+      </div>
+      <div class="profile-stats">
+        ${PROFILE_STATS.map((stat) => `
+          <label>
+            <span>${profileStatLabel(stat)}</span>
+            <input data-profile-stat="${profile.playerId}:${stat}" type="number" min="0" max="100" step="1" value="${profile[stat]}" />
+          </label>
+        `).join("")}
+      </div>
+    </article>
+  `).join("");
+}
+
+function profileStatLabel(stat) {
+  return stat.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
+}
+
 function getCurrentPlayer() {
   if (!currentPlayerId) return null;
   return state.players.find((player) => player.id === currentPlayerId || player.remoteId === currentPlayerId) || null;
@@ -1159,7 +1401,7 @@ function renderPlayerMarket(event, player) {
       </div>
       <div class="event-body">
         ${event.bonusPoints > 0 ? `<p class="muted">Bonus: <strong>${money(event.bonusPoints)}</strong> · ${escapeHtml(event.bonusLabel || "Host-triggered bonus")}</p>` : ""}
-        ${renderMarketOddsMenu(event)}
+        ${renderMarketOddsMenu(event, { showTotals: false })}
       </div>
     </article>
   `;
@@ -1313,6 +1555,7 @@ function renderEvent(event) {
             ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus points available</span>' : ""}
           </div>
           <p class="muted">Pool: ${money(pool)} · Tax: ${money(pool * TAX_RATE)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
+          ${event.seedPool > 0 ? `<p class="muted">Seeded odds: <strong>${escapeHtml(event.profileMarketType || "Custom")}</strong> · ${money(event.seedPool)} virtual liquidity</p>` : ""}
           ${event.bonusPoints > 0 ? `<p class="muted">Bonus: <strong>${money(event.bonusPoints)}</strong> points · ${escapeHtml(event.bonusLabel || "Host-triggered bonus")}</p>` : ""}
         </div>
         <div class="event-actions">
@@ -1354,11 +1597,11 @@ function renderMarketSummary(event) {
   `;
 }
 
-function renderMarketOddsMenu(event) {
+function renderMarketOddsMenu(event, options = {}) {
   return `
     <details class="odds-menu" open>
       <summary>Available outcomes and odds</summary>
-      <div class="odds-grid">${renderOdds(event)}</div>
+      <div class="odds-grid">${renderOdds(event, options)}</div>
     </details>
   `;
 }
@@ -1408,17 +1651,17 @@ function renderBetRow(event, player) {
   `;
 }
 
-function renderOdds(event) {
+function renderOdds(event, { showTotals = true } = {}) {
   const oddsByOutcome = new Map(getOdds(event).map((item) => [item.outcome, item]));
   const outcomes = getEventOutcomes(event);
   if (outcomes.length === 0) return '<div class="empty">No outcomes available.</div>';
 
   return outcomes.map((outcome) => {
     const item = oddsByOutcome.get(outcome);
-    const displayOdds = item ? formatOdds(item.profitPerPoint) : "No bets yet";
-    const backed = item ? item.total : 0;
+    const displayOdds = item && item.total > 0 ? formatOdds(item.profitPerPoint) : "No bets yet";
+    const backed = item ? item.realTotal : 0;
     return `
-      <div class="odds-row">
+      <div class="odds-row ${showTotals ? "" : "odds-row-compact"}">
         <div class="odds-main">
           <strong>${escapeHtml(outcome)}</strong>
           <span class="muted">Option</span>
@@ -1427,10 +1670,12 @@ function renderOdds(event) {
           <strong>${displayOdds}</strong>
           <span class="muted">Odds</span>
         </div>
-        <div class="odds-stat">
-          <strong>${money(backed)}</strong>
-          <span class="muted">Backed</span>
-        </div>
+        ${showTotals ? `
+          <div class="odds-stat">
+            <strong>${money(backed)}</strong>
+            <span class="muted">Backed</span>
+          </div>
+        ` : ""}
       </div>
     `;
   }).join("");
@@ -1499,7 +1744,7 @@ async function addPlayer(name, points) {
   }
 }
 
-async function addEvent(name, outcomeLabels = [], bonus = {}) {
+async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType = "Custom") {
   if (supabaseConfigured() && !remoteReady()) {
     await askConfirm({
       title: "Supabase not ready",
@@ -1515,13 +1760,15 @@ async function addEvent(name, outcomeLabels = [], bonus = {}) {
     name,
     status: "open",
     marketType: "single",
+    profileMarketType,
     payoutMode: "pool",
     payoutMultiplier: 1,
     taxRate: TAX_RATE,
     bonusPoints: Number(bonus.points || 0),
     bonusLabel: bonus.label || null,
     bets: [],
-    outcomes: outcomeLabels.map((label) => ({ id: uid(), label })),
+    seedPool: outcomeItems.reduce((total, outcome) => total + Number(outcome.seedLiquidity || 0), 0),
+    outcomes: outcomeItems.map(normalizeOutcome),
     winningOutcome: null,
     createdAt: new Date().toISOString(),
     lockedAt: null,
@@ -1939,8 +2186,8 @@ els.eventForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = els.eventName.value.trim();
   if (!name) return;
-  const outcomeLabels = getOutcomeFieldLabels();
-  if (outcomeLabels.length < 2) {
+  const outcomeItems = getOutcomeFieldItems();
+  if (outcomeItems.length < 2) {
     await askConfirm({
       title: "Add outcomes",
       message: "Create at least two outcomes before publishing a market.",
@@ -1957,7 +2204,7 @@ els.eventForm.addEventListener("submit", async (event) => {
     }
     : {};
   const beforeCount = state.events.length;
-  await addEvent(name, outcomeLabels, bonus);
+  await addEvent(name, outcomeItems, bonus, els.marketType.value);
   if (state.events.length === beforeCount) return;
   els.eventName.value = "";
   els.bonusEnabled.checked = false;
@@ -1966,6 +2213,18 @@ els.eventForm.addEventListener("submit", async (event) => {
   els.bonusPoints.value = "";
   renderOutcomeFields();
   els.eventName.focus();
+});
+
+els.populateDefaultPlayers?.addEventListener("click", () => {
+  renderOutcomeFields(buildSeededOutcomes(els.marketType.value));
+});
+
+els.marketType?.addEventListener("change", () => {
+  const outcomes = getOutcomeFieldItems();
+  if (!outcomes.some((outcome) => outcome.profileId)) return;
+  const profilesById = new Map(state.playerProfiles.map((profile) => [profile.playerId, profile]));
+  const profiles = outcomes.map((outcome) => profilesById.get(outcome.profileId)).filter(Boolean);
+  if (profiles.length) renderOutcomeFields(buildSeededOutcomes(els.marketType.value, profiles));
 });
 
 els.outcomeFields.addEventListener("keydown", (event) => {
@@ -2008,10 +2267,41 @@ document.addEventListener("click", (event) => {
     if (player) openPlayerBetDialog(playerBetButton.dataset.playerBet, player.id);
   }
   if (removeOutcomeButton) {
-    const labels = Array.from(document.querySelectorAll("[data-outcome-field]")).map((input) => input.value);
-    labels.splice(Number(removeOutcomeButton.dataset.removeOutcome), 1);
-    renderOutcomeFields(labels);
+    const outcomes = getOutcomeFieldDraftItems();
+    outcomes.splice(Number(removeOutcomeButton.dataset.removeOutcome), 1);
+    renderOutcomeFields(outcomes.length >= 2 ? outcomes : ["", ""]);
   }
+});
+
+els.profilesList?.addEventListener("input", (event) => {
+  const nameInput = event.target.closest("[data-profile-name]");
+  const statInput = event.target.closest("[data-profile-stat]");
+  if (nameInput) {
+    const profile = state.playerProfiles.find((item) => item.playerId === nameInput.dataset.profileName);
+    if (profile) profile.playerName = nameInput.value.trim() || profile.playerName;
+    saveState();
+  }
+  if (statInput) {
+    const [playerId, stat] = statInput.dataset.profileStat.split(":");
+    const profile = state.playerProfiles.find((item) => item.playerId === playerId);
+    if (profile && PROFILE_STATS.includes(stat)) {
+      profile[stat] = clampNumber(statInput.value, 0, 100);
+      saveState();
+    }
+  }
+});
+
+els.resetProfiles?.addEventListener("click", async () => {
+  const confirmed = await askConfirm({
+    title: "Reset profiles?",
+    message: "Reset default player profiles back to the built-in ratings?",
+    action: "Reset profiles",
+    danger: true,
+  });
+  if (!confirmed) return;
+  state.playerProfiles = cloneDefaultProfiles();
+  renderProfiles();
+  saveState();
 });
 
 async function openPlayerBetDialog(eventId, playerId) {
@@ -2117,9 +2407,9 @@ function updatePlayerAutoRefresh() {
 }
 
 els.addOutcome.addEventListener("click", () => {
-  const labels = Array.from(document.querySelectorAll("[data-outcome-field]")).map((input) => input.value);
-  labels.push("");
-  renderOutcomeFields(labels);
+  const outcomes = getOutcomeFieldDraftItems();
+  outcomes.push({ id: uid(), label: "" });
+  renderOutcomeFields(outcomes);
 });
 
 els.bonusEnabled.addEventListener("change", () => {
@@ -2158,9 +2448,10 @@ els.exportData.addEventListener("click", () => {
 els.importData.addEventListener("change", async () => {
   const file = els.importData.files[0];
   if (!file) return;
-  const imported = JSON.parse(await file.text());
-  state.players = Array.isArray(imported.players) ? imported.players : [];
-  state.events = Array.isArray(imported.events) ? imported.events : [];
+  const imported = normalizeState(JSON.parse(await file.text()));
+  state.players = imported.players;
+  state.events = imported.events;
+  state.playerProfiles = imported.playerProfiles;
   render();
   await runRemote(async () => {
     await clearRemoteSession();
@@ -2180,6 +2471,7 @@ els.resetNight.addEventListener("click", async () => {
   await runRemote(() => clearRemoteSession());
   state.players = [];
   state.events = [];
+  state.playerProfiles = Array.isArray(state.playerProfiles) ? state.playerProfiles : cloneDefaultProfiles();
   render();
 });
 

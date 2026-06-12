@@ -162,7 +162,7 @@ h3 {
   top: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 0.4rem;
   border-bottom: 1px solid var(--line);
   background: rgba(245, 242, 235, 0.96);
@@ -346,6 +346,50 @@ h3 {
 .outcome-fields {
   display: grid;
   gap: 0.5rem;
+}
+
+.seed-note {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.builder-actions {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.profiles-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.profile-row {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 0.75rem;
+}
+
+.profile-stats {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.profile-stats label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.odds-row-compact {
+  grid-template-columns: minmax(0, 1fr) minmax(76px, auto);
 }
 
 .add-outcome-button {
