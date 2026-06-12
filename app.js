@@ -10,6 +10,7 @@ const DEFAULT_PLAYER_PROFILES = [
   { playerId: "chris", playerName: "Chris", skill: 88, survivability: 82, volatility: 42, consistency: 84, recentForm: 80, aggression: 68 },
   { playerId: "wes", playerName: "Wes", skill: 86, survivability: 78, volatility: 76, consistency: 68, recentForm: 84, aggression: 78 },
   { playerId: "jamie", playerName: "Jamie", skill: 86, survivability: 72, volatility: 82, consistency: 62, recentForm: 92, aggression: 82 },
+  { playerId: "damo", playerName: "Damo", skill: 85, survivability: 78, volatility: 65, consistency: 50, recentForm: 75, aggression: 72 },
   { playerId: "jeremy", playerName: "Jeremy", skill: 80, survivability: 88, volatility: 32, consistency: 78, recentForm: 74, aggression: 52 },
   { playerId: "tom", playerName: "Tom", skill: 78, survivability: 70, volatility: 74, consistency: 58, recentForm: 66, aggression: 72 },
   { playerId: "nic", playerName: "Nic", skill: 76, survivability: 72, volatility: 52, consistency: 66, recentForm: 62, aggression: 60 },
@@ -64,6 +65,8 @@ const els = {
   outcomeFields: document.querySelector("#outcomeFields"),
   addOutcome: document.querySelector("#addOutcome"),
   populateDefaultPlayers: document.querySelector("#populateDefaultPlayers"),
+  profileOutcomeSelect: document.querySelector("#profileOutcomeSelect"),
+  addProfileOutcome: document.querySelector("#addProfileOutcome"),
   bonusEnabled: document.querySelector("#bonusEnabled"),
   bonusFields: document.querySelector("#bonusFields"),
   bonusLabel: document.querySelector("#bonusLabel"),
@@ -93,6 +96,7 @@ const els = {
   profilesTab: document.querySelector("#profilesTab"),
   createMarketTab: document.querySelector("#createMarketTab"),
   eventsTab: document.querySelector("#eventsTab"),
+  socialTab: document.querySelector("#socialTab"),
   sessionTab: document.querySelector("#sessionTab"),
   playersPanel: document.querySelector("#playersPanel"),
   profilesPanel: document.querySelector("#profilesPanel"),
@@ -101,6 +105,8 @@ const els = {
   addProfile: document.querySelector("#addProfile"),
   resetProfiles: document.querySelector("#resetProfiles"),
   eventsPanel: document.querySelector("#eventsPanel"),
+  socialPanel: document.querySelector("#socialPanel"),
+  hostSocialList: document.querySelector("#hostSocialList"),
   sessionPanel: document.querySelector("#sessionPanel"),
   showPlayerQr: document.querySelector("#showPlayerQr"),
   closeAllBetting: document.querySelector("#closeAllBetting"),
@@ -149,10 +155,16 @@ function normalizeState(rawState) {
   nextState.events = Array.isArray(nextState.events) ? nextState.events : [];
   const savedProfiles = Array.isArray(nextState.playerProfiles) ? nextState.playerProfiles : [];
   const profilesById = new Map(savedProfiles.map((profile) => [profile.playerId, profile]));
+  const missingDefaultProfiles = cloneDefaultProfiles().filter((profile) => !profilesById.has(profile.playerId));
   nextState.playerProfiles = cloneDefaultProfiles().map((profile) => normalizeProfile({
     ...profile,
     ...(profilesById.get(profile.playerId) || {}),
   }));
+  missingDefaultProfiles.forEach((profile) => {
+    if (!nextState.playerProfiles.some((item) => item.playerId === profile.playerId)) {
+      nextState.playerProfiles.push(normalizeProfile(profile));
+    }
+  });
   savedProfiles
     .filter((profile) => profile?.playerId && !nextState.playerProfiles.some((item) => item.playerId === profile.playerId))
     .forEach((profile) => nextState.playerProfiles.push(normalizeProfile(profile)));
@@ -488,6 +500,24 @@ function buildSeededOutcomes(marketType, profiles = state.playerProfiles.filter(
       seedLiquidity: DEFAULT_SEED_POOL * probability,
     };
   });
+}
+
+function refreshProfileSeededOutcomes(outcomes) {
+  const profilesById = new Map(state.playerProfiles.map((profile) => [profile.playerId, profile]));
+  const profileIds = [...new Set(outcomes.map((outcome) => outcome.profileId).filter(Boolean))];
+  const profiles = profileIds.map((profileId) => profilesById.get(profileId)).filter(Boolean);
+  const manualOutcomes = outcomes
+    .filter((outcome) => normalizeOutcomeLabel(outcome.label) && !outcome.profileId)
+    .map((outcome) => ({
+      ...outcome,
+      label: normalizeOutcomeLabel(outcome.label),
+      weight: 0,
+      probability: 0,
+      seedLiquidity: 0,
+    }));
+
+  if (!profiles.length) return manualOutcomes;
+  return [...buildSeededOutcomes(els.marketType.value, profiles), ...manualOutcomes];
 }
 
 function getEventPayouts(event) {
@@ -1178,6 +1208,7 @@ function render() {
   renderPlayers();
   renderProfiles();
   renderEvents();
+  renderHostSocial();
   renderPlayerMode();
 }
 
@@ -1191,6 +1222,7 @@ function renderMode() {
   els.profilesPanel.hidden = isPlayer;
   els.createMarketPanel.hidden = isPlayer;
   els.eventsPanel.hidden = isPlayer;
+  els.socialPanel.hidden = isPlayer;
   els.playerJoinPanel.hidden = !isPlayer || Boolean(getCurrentPlayer());
   els.playerProfilePanel.hidden = !isPlayer || !getCurrentPlayer();
   els.playerMarketsPanel.hidden = !isPlayer || !getCurrentPlayer();
@@ -1210,16 +1242,19 @@ function renderTabs() {
   const showProfiles = activeTab === "profiles";
   const showCreateMarket = activeTab === "createMarket";
   const showEvents = activeTab === "events";
+  const showSocial = activeTab === "social";
   els.sessionTab.classList.toggle("active", showSession);
   els.playersTab.classList.toggle("active", showPlayers);
   els.profilesTab.classList.toggle("active", showProfiles);
   els.createMarketTab.classList.toggle("active", showCreateMarket);
   els.eventsTab.classList.toggle("active", showEvents);
+  els.socialTab.classList.toggle("active", showSocial);
   els.sessionPanel.classList.toggle("active", showSession);
   els.playersPanel.classList.toggle("active", showPlayers);
   els.profilesPanel.classList.toggle("active", showProfiles);
   els.createMarketPanel.classList.toggle("active", showCreateMarket);
   els.eventsPanel.classList.toggle("active", showEvents);
+  els.socialPanel.classList.toggle("active", showSocial);
 }
 
 function renderPlayerTabs() {
@@ -1305,6 +1340,7 @@ function renderPlayerDetails(player) {
 
 function renderProfiles() {
   if (!els.profilesList) return;
+  renderProfileOutcomePicker();
   els.profilesList.innerHTML = state.playerProfiles.map((profile) => `
     <article class="profile-row ${profile.attending === false ? "inactive" : ""}">
       <div class="profile-top">
@@ -1329,6 +1365,16 @@ function renderProfiles() {
 
 function profileStatLabel(stat) {
   return stat.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function renderProfileOutcomePicker() {
+  if (!els.profileOutcomeSelect) return;
+  const selected = els.profileOutcomeSelect.value;
+  els.profileOutcomeSelect.innerHTML = `
+    <option value="">Add player...</option>
+    ${state.playerProfiles.map((profile) => `<option value="${escapeAttr(profile.playerId)}">${escapeHtml(profile.playerName)}${profile.attending === false ? " (not attending)" : ""}</option>`).join("")}
+  `;
+  els.profileOutcomeSelect.value = selected;
 }
 
 function getCurrentPlayer() {
@@ -1415,11 +1461,21 @@ function renderPlayerMarket(event, player) {
 }
 
 function renderPlayerSocial(player) {
+  renderSocialFeed(els.playerSocialList, player);
+}
+
+function renderHostSocial() {
+  if (!els.hostSocialList) return;
+  renderSocialFeed(els.hostSocialList, null);
+}
+
+function renderSocialFeed(target, currentPlayer = null) {
+  if (!target) return;
   const rows = state.players
     .map((item) => ({ player: item, activity: getLatestPlayerActivity(item) }))
     .sort((a, b) => new Date(b.activity.at || 0) - new Date(a.activity.at || 0) || b.player.points - a.player.points || a.player.name.localeCompare(b.player.name));
 
-  els.playerSocialList.innerHTML = `
+  target.innerHTML = rows.length ? `
     <div class="social-feed">
       ${rows.map(({ player: item, activity }) => {
         const reserved = getReservedByPlayer(item.id);
@@ -1427,7 +1483,7 @@ function renderPlayerSocial(player) {
           <div class="social-row">
             <div>
               <div class="social-name-line">
-                <strong>${escapeHtml(item.name)}${item.id === player.id ? " (you)" : ""}</strong>
+                <strong>${escapeHtml(item.name)}${currentPlayer && item.id === currentPlayer.id ? " (you)" : ""}</strong>
                 ${activity.type === "win" ? '<span class="star" title="Recent win">🏆</span>' : ""}
               </div>
               <p class="muted">${escapeHtml(activity.text)}</p>
@@ -1440,7 +1496,7 @@ function renderPlayerSocial(player) {
         `;
       }).join("")}
     </div>
-  `;
+  ` : '<div class="empty">No players have joined yet.</div>';
 }
 
 function getLatestPlayerActivity(player) {
@@ -2229,11 +2285,7 @@ els.populateDefaultPlayers?.addEventListener("click", () => {
 els.marketType?.addEventListener("change", () => {
   const outcomes = getOutcomeFieldItems();
   if (!outcomes.some((outcome) => outcome.profileId)) return;
-  const profilesById = new Map(state.playerProfiles.map((profile) => [profile.playerId, profile]));
-  const profiles = outcomes
-    .map((outcome) => profilesById.get(outcome.profileId))
-    .filter((profile) => profile && profile.attending !== false);
-  if (profiles.length) renderOutcomeFields(buildSeededOutcomes(els.marketType.value, profiles));
+  renderOutcomeFields(refreshProfileSeededOutcomes(outcomes));
 });
 
 els.outcomeFields.addEventListener("keydown", (event) => {
@@ -2464,6 +2516,25 @@ els.addOutcome.addEventListener("click", () => {
   const outcomes = getOutcomeFieldDraftItems();
   outcomes.push({ id: uid(), label: "" });
   renderOutcomeFields(outcomes);
+});
+
+els.addProfileOutcome?.addEventListener("click", () => {
+  const profileId = els.profileOutcomeSelect.value;
+  const profile = state.playerProfiles.find((item) => item.playerId === profileId);
+  if (!profile) return;
+
+  const outcomes = getOutcomeFieldDraftItems();
+  const hasProfile = outcomes.some((outcome) => outcome.profileId === profile.playerId);
+  if (!hasProfile) {
+    outcomes.push({
+      id: uid(),
+      label: profile.playerName,
+      profileId: profile.playerId,
+    });
+  }
+
+  renderOutcomeFields(refreshProfileSeededOutcomes(outcomes));
+  els.profileOutcomeSelect.value = "";
 });
 
 els.bonusEnabled.addEventListener("change", () => {

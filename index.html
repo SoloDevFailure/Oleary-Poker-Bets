@@ -37,6 +37,7 @@
         <button id="profilesTab" class="tab" type="button" data-tab="profiles">Profiles</button>
         <button id="createMarketTab" class="tab" type="button" data-tab="createMarket">Create Market</button>
         <button id="eventsTab" class="tab" type="button" data-tab="events">Markets</button>
+        <button id="socialTab" class="tab" type="button" data-tab="social">Social</button>
       </nav>
 
       <nav id="playerTabs" class="tabs player-tabs" aria-label="Player views" hidden>
@@ -172,6 +173,10 @@
               <div id="outcomeFields" class="outcome-fields"></div>
               <div class="builder-actions">
                 <button id="populateDefaultPlayers" class="ghost" type="button">Populate Default Players</button>
+                <select id="profileOutcomeSelect" aria-label="Add player outcome">
+                  <option value="">Add player...</option>
+                </select>
+                <button id="addProfileOutcome" class="ghost" type="button">Add player</button>
                 <button id="addOutcome" class="ghost add-outcome-button" type="button">+ Add outcome</button>
               </div>
             </div>
@@ -199,6 +204,16 @@
           </div>
 
           <div id="eventsList" class="events-list"></div>
+        </section>
+
+        <section id="socialPanel" class="panel social-panel tab-panel">
+          <div class="section-header">
+            <div>
+              <h2>Social</h2>
+              <p>See who has joined and how everyone is travelling.</p>
+            </div>
+          </div>
+          <div id="hostSocialList" class="players-list"></div>
         </section>
       </main>
     </div>

@@ -360,6 +360,12 @@ h3 {
   flex-wrap: wrap;
 }
 
+.builder-actions select {
+  flex: 1 1 180px;
+  width: auto;
+  min-width: 0;
+}
+
 .profiles-list {
   display: grid;
   gap: 0.75rem;
