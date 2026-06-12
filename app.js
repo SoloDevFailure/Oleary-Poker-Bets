@@ -31,6 +31,7 @@ let playerAutoRefreshTimer = null;
 let playerAutoRefreshInFlight = false;
 const collapsedEvents = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-events") || "[]"));
 const expandedPlayers = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-players") || "[]"));
+const expandedOddsMenus = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-odds") || "[]"));
 const seenWinPayoutsKey = `oleary-seen-win-payouts-${deviceKey}`;
 const seenWinPayouts = new Set(JSON.parse(localStorage.getItem(seenWinPayoutsKey) || "[]"));
 let winPopupsPrimed = localStorage.getItem(`${seenWinPayoutsKey}-primed`) === "yes";
@@ -214,6 +215,10 @@ function saveCollapsedEvents() {
 
 function saveExpandedPlayers() {
   localStorage.setItem("poker-night-bets-expanded-players", JSON.stringify([...expandedPlayers]));
+}
+
+function saveExpandedOddsMenus() {
+  localStorage.setItem("poker-night-bets-expanded-odds", JSON.stringify([...expandedOddsMenus]));
 }
 
 function setSyncStatus(text, mode) {
@@ -1661,8 +1666,9 @@ function renderMarketSummary(event) {
 }
 
 function renderMarketOddsMenu(event, options = {}) {
+  const isExpanded = expandedOddsMenus.has(event.id);
   return `
-    <details class="odds-menu" open>
+    <details class="odds-menu" data-odds-menu="${event.id}" ${isExpanded ? "open" : ""}>
       <summary>Available outcomes and odds</summary>
       <div class="odds-grid">${renderOdds(event, options)}</div>
     </details>
@@ -1721,7 +1727,7 @@ function renderOdds(event, { showTotals = true } = {}) {
 
   return outcomes.map((outcome) => {
     const item = oddsByOutcome.get(outcome);
-    const displayOdds = item && item.total > 0 ? formatOdds(item.profitPerPoint) : "No bets yet";
+    const displayOdds = item && item.total > 0 ? formatOdds(getDisplayProfitPerPoint(event, item)) : "Syncing odds";
     const backed = item ? item.realTotal : 0;
     return `
       <div class="odds-row ${showTotals ? "" : "odds-row-compact"}">
@@ -1778,6 +1784,22 @@ function formatOdds(profitPerPoint) {
   if (profitPerPoint > 0) return `1:${formatRatio(1 / profitPerPoint)}`;
   if (Math.abs(profitPerPoint) < 0.01) return "Even";
   return `${formatRatio(Math.abs(profitPerPoint * 100))}% tax loss`;
+}
+
+function getDisplayProfitPerPoint(event, oddsItem) {
+  if (!oddsItem || Number(oddsItem.seedTotal || 0) <= 0 || getSeedPool(event) <= 0) {
+    return oddsItem?.profitPerPoint || 0;
+  }
+
+  const seededOdds = getOdds(event).filter((item) => Number(item.seedTotal || 0) > 0);
+  const probabilities = seededOdds.map((item) => Number(item.seedTotal || 0) / getSeedPool(event));
+  const maxProbability = Math.max(...probabilities);
+  const minProbability = Math.min(...probabilities);
+  const probability = Number(oddsItem.seedTotal || 0) / getSeedPool(event);
+
+  if (!Number.isFinite(probability) || maxProbability === minProbability) return 3;
+  const longshotScale = (maxProbability - probability) / (maxProbability - minProbability);
+  return 1 + longshotScale * 4;
 }
 
 async function addPlayer(name, points) {
@@ -1858,6 +1880,7 @@ async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType =
       for (const outcome of newEvent.outcomes) {
         await ensureRemoteOutcome(newEvent, outcome.label);
       }
+      await saveRemoteMarket(newEvent);
     });
   }
 }
@@ -2335,6 +2358,17 @@ document.addEventListener("click", (event) => {
   }
   if (removeProfileButton) removeProfile(removeProfileButton.dataset.removeProfile);
 });
+
+document.addEventListener("toggle", (event) => {
+  const oddsMenu = event.target.closest?.("[data-odds-menu]");
+  if (!oddsMenu) return;
+  if (oddsMenu.open) {
+    expandedOddsMenus.add(oddsMenu.dataset.oddsMenu);
+  } else {
+    expandedOddsMenus.delete(oddsMenu.dataset.oddsMenu);
+  }
+  saveExpandedOddsMenus();
+}, true);
 
 els.profilesList?.addEventListener("input", (event) => {
   const nameInput = event.target.closest("[data-profile-name]");
