@@ -78,6 +78,19 @@ input {
   display: none !important;
 }
 
+html[data-mode="player"] nav.tabs:not(#playerTabs),
+html[data-mode="player"] #sessionPanel,
+html[data-mode="player"] #playersPanel,
+html[data-mode="player"] #profilesPanel,
+html[data-mode="player"] #createMarketPanel,
+html[data-mode="player"] #eventsPanel,
+html[data-mode="player"] #socialPanel,
+html[data-mode="player"] #exportData,
+html[data-mode="player"] .file-button,
+html[data-mode="player"] #resetNight {
+  display: none !important;
+}
+
 .topbar {
   display: flex;
   align-items: flex-start;

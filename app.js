@@ -23,6 +23,7 @@ const state = loadState();
 const params = new URLSearchParams(window.location.search);
 const requestedMode = params.get("mode");
 const appMode = requestedMode === "host" ? "host" : "player";
+document.documentElement.dataset.mode = appMode;
 const deviceKey = params.get("device") || localStorage.getItem("oleary-player-device-id") || uid();
 localStorage.setItem("oleary-player-device-id", deviceKey);
 let currentPlayerId = localStorage.getItem(`oleary-player-id-${deviceKey}`) || null;

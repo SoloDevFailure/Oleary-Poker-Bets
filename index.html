@@ -7,6 +7,9 @@
     <meta name="theme-color" content="#166b4d" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Oleary Bets" />
+    <script>
+      document.documentElement.dataset.mode = new URLSearchParams(window.location.search).get("mode") === "host" ? "host" : "player";
+    </script>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icon.svg" />
     <link rel="apple-touch-icon" href="icon.svg" />
@@ -20,7 +23,7 @@
           <h1>Oleary Ave Poker Bets</h1>
         </div>
         <div class="toolbar">
-          <span id="syncStatus" class="sync-status">Local host mode</span>
+          <span id="syncStatus" class="sync-status">Connecting...</span>
           <button id="syncNow" class="ghost">Refresh</button>
           <button id="exportData" class="ghost">Export</button>
           <label class="ghost file-button">
