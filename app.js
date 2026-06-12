@@ -98,6 +98,7 @@ const els = {
   profilesPanel: document.querySelector("#profilesPanel"),
   createMarketPanel: document.querySelector("#createMarketPanel"),
   profilesList: document.querySelector("#profilesList"),
+  addProfile: document.querySelector("#addProfile"),
   resetProfiles: document.querySelector("#resetProfiles"),
   eventsPanel: document.querySelector("#eventsPanel"),
   sessionPanel: document.querySelector("#sessionPanel"),
@@ -139,7 +140,7 @@ function loadState() {
 }
 
 function cloneDefaultProfiles() {
-  return DEFAULT_PLAYER_PROFILES.map((profile) => ({ ...profile }));
+  return DEFAULT_PLAYER_PROFILES.map((profile) => ({ ...profile, attending: true }));
 }
 
 function normalizeState(rawState) {
@@ -169,7 +170,7 @@ function normalizeProfile(profile) {
   return PROFILE_STATS.reduce((result, stat) => {
     result[stat] = clampNumber(profile[stat], 0, 100);
     return result;
-  }, { playerId, playerName });
+  }, { playerId, playerName, attending: profile.attending !== false });
 }
 
 function normalizeOutcome(outcome) {
@@ -471,10 +472,11 @@ function getProfileWeight(profile, marketType) {
   }
 }
 
-function buildSeededOutcomes(marketType, profiles = state.playerProfiles) {
-  const weights = profiles.map((profile) => Math.max(0.01, getProfileWeight(profile, marketType)));
+function buildSeededOutcomes(marketType, profiles = state.playerProfiles.filter((profile) => profile.attending !== false)) {
+  const includedProfiles = profiles.length ? profiles : state.playerProfiles;
+  const weights = includedProfiles.map((profile) => Math.max(0.01, getProfileWeight(profile, marketType)));
   const totalWeight = weights.reduce((total, weight) => total + weight, 0) || 1;
-  return profiles.map((profile, index) => {
+  return includedProfiles.map((profile, index) => {
     const weight = weights[index];
     const probability = weight / totalWeight;
     return {
@@ -1304,9 +1306,14 @@ function renderPlayerDetails(player) {
 function renderProfiles() {
   if (!els.profilesList) return;
   els.profilesList.innerHTML = state.playerProfiles.map((profile) => `
-    <article class="profile-row">
-      <div class="profile-name">
+    <article class="profile-row ${profile.attending === false ? "inactive" : ""}">
+      <div class="profile-top">
         <input data-profile-name="${profile.playerId}" type="text" value="${escapeAttr(profile.playerName)}" aria-label="Profile name" />
+        <label class="checkbox-row profile-attending">
+          <input data-profile-attending="${profile.playerId}" type="checkbox" ${profile.attending === false ? "" : "checked"} />
+          Attending
+        </label>
+        <button class="danger x-button" type="button" data-remove-profile="${profile.playerId}" aria-label="Remove profile">x</button>
       </div>
       <div class="profile-stats">
         ${PROFILE_STATS.map((stat) => `
@@ -2223,7 +2230,9 @@ els.marketType?.addEventListener("change", () => {
   const outcomes = getOutcomeFieldItems();
   if (!outcomes.some((outcome) => outcome.profileId)) return;
   const profilesById = new Map(state.playerProfiles.map((profile) => [profile.playerId, profile]));
-  const profiles = outcomes.map((outcome) => profilesById.get(outcome.profileId)).filter(Boolean);
+  const profiles = outcomes
+    .map((outcome) => profilesById.get(outcome.profileId))
+    .filter((profile) => profile && profile.attending !== false);
   if (profiles.length) renderOutcomeFields(buildSeededOutcomes(els.marketType.value, profiles));
 });
 
@@ -2247,6 +2256,7 @@ document.addEventListener("click", (event) => {
   const removePlayerButton = event.target.closest("[data-remove-player]");
   const removeEventButton = event.target.closest("[data-remove-event]");
   const removeOutcomeButton = event.target.closest("[data-remove-outcome]");
+  const removeProfileButton = event.target.closest("[data-remove-profile]");
   const refreshMarketButton = event.target.closest("[data-refresh-market]");
   const playerBetButton = event.target.closest("[data-player-bet]");
 
@@ -2271,6 +2281,7 @@ document.addEventListener("click", (event) => {
     outcomes.splice(Number(removeOutcomeButton.dataset.removeOutcome), 1);
     renderOutcomeFields(outcomes.length >= 2 ? outcomes : ["", ""]);
   }
+  if (removeProfileButton) removeProfile(removeProfileButton.dataset.removeProfile);
 });
 
 els.profilesList?.addEventListener("input", (event) => {
@@ -2290,6 +2301,49 @@ els.profilesList?.addEventListener("input", (event) => {
     }
   }
 });
+
+els.profilesList?.addEventListener("change", (event) => {
+  const attendingInput = event.target.closest("[data-profile-attending]");
+  if (!attendingInput) return;
+  const profile = state.playerProfiles.find((item) => item.playerId === attendingInput.dataset.profileAttending);
+  if (!profile) return;
+  profile.attending = attendingInput.checked;
+  saveState();
+  renderProfiles();
+});
+
+els.addProfile?.addEventListener("click", () => {
+  const baseName = "New Player";
+  const profile = normalizeProfile({
+    playerId: `${baseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${uid()}`,
+    playerName: baseName,
+    attending: true,
+    skill: 70,
+    survivability: 70,
+    volatility: 60,
+    consistency: 60,
+    recentForm: 60,
+    aggression: 60,
+  });
+  state.playerProfiles.push(profile);
+  saveState();
+  renderProfiles();
+});
+
+async function removeProfile(playerId) {
+  const profile = state.playerProfiles.find((item) => item.playerId === playerId);
+  if (!profile) return;
+  const confirmed = await askConfirm({
+    title: "Remove profile?",
+    message: `Remove ${profile.playerName} from default profiles?`,
+    action: "Remove profile",
+    danger: true,
+  });
+  if (!confirmed) return;
+  state.playerProfiles = state.playerProfiles.filter((item) => item.playerId !== playerId);
+  saveState();
+  renderProfiles();
+}
 
 els.resetProfiles?.addEventListener("click", async () => {
   const confirmed = await askConfirm({
