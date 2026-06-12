@@ -21,7 +21,8 @@ const DEFAULT_PLAYER_PROFILES = [
 
 const state = loadState();
 const params = new URLSearchParams(window.location.search);
-const appMode = params.get("mode") === "player" ? "player" : "host";
+const requestedMode = params.get("mode");
+const appMode = requestedMode === "host" ? "host" : "player";
 const deviceKey = params.get("device") || localStorage.getItem("oleary-player-device-id") || uid();
 localStorage.setItem("oleary-player-device-id", deviceKey);
 let currentPlayerId = localStorage.getItem(`oleary-player-id-${deviceKey}`) || null;
@@ -40,6 +41,18 @@ const remote = {
   session: null,
   enabled: false,
 };
+
+function isHostMode() {
+  return appMode === "host";
+}
+
+function requireHostMode() {
+  if (!isHostMode()) {
+    console.warn("Blocked host-only action in player mode.");
+    return false;
+  }
+  return true;
+}
 
 if (appMode === "player") {
   document.title = "Oleary Poker Bets Player";
@@ -371,6 +384,7 @@ function getPlayerJoinUrl() {
 }
 
 async function showPlayerQrCode() {
+  if (!requireHostMode()) return;
   const playerUrl = getPlayerJoinUrl();
   els.playerQrUrl.textContent = playerUrl;
   els.playerQrFallback.hidden = true;
@@ -673,6 +687,7 @@ async function loadRemoteState() {
       }),
     };
   });
+  recalculateRemotePlayerPoints();
 
   if (appMode === "player") {
     const devicePlayer = state.players.find((player) => player.deviceId === deviceKey);
@@ -694,6 +709,33 @@ function groupBy(items, key) {
     map.get(groupKey).push(item);
     return map;
   }, new Map());
+}
+
+function recalculateRemotePlayerPoints() {
+  const pointsByPlayer = new Map(state.players.map((player) => {
+    const adjustmentTotal = (player.adjustments || []).reduce((total, adjustment) => {
+      return total + (adjustment.type === "bonus" ? adjustment.value : -adjustment.value);
+    }, 0);
+    return [player.id, Number(player.startingPoints || 0) + adjustmentTotal];
+  }));
+
+  state.events.forEach((event) => {
+    if (event.status === "locked" || event.status === "resolved") {
+      event.bets.forEach((bet) => {
+        pointsByPlayer.set(bet.playerId, (pointsByPlayer.get(bet.playerId) || 0) - Number(bet.value || 0));
+      });
+    }
+
+    if (event.status === "resolved") {
+      getEventPayouts(event).forEach((payout) => {
+        pointsByPlayer.set(payout.playerId, (pointsByPlayer.get(payout.playerId) || 0) + Number(payout.amount || 0));
+      });
+    }
+  });
+
+  state.players.forEach((player) => {
+    player.points = pointsByPlayer.get(player.id) ?? player.points;
+  });
 }
 
 async function saveRemoteMarket(event) {
@@ -1936,6 +1978,7 @@ function getMarketMovements(event, odds = getOdds(event)) {
 }
 
 async function addPlayer(name, points) {
+  if (!requireHostMode()) return;
   if (supabaseConfigured() && !remoteReady()) {
     await askConfirm({
       title: "Supabase not ready",
@@ -1963,6 +2006,7 @@ async function addPlayer(name, points) {
 }
 
 async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType = "Custom") {
+  if (!requireHostMode()) return;
   if (supabaseConfigured() && !remoteReady()) {
     await askConfirm({
       title: "Supabase not ready",
@@ -2019,6 +2063,7 @@ async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType =
 }
 
 async function closeEvent(eventId) {
+  if (!requireHostMode()) return;
   const event = state.events.find((item) => item.id === eventId);
   if (!event || event.status !== "open") return;
 
@@ -2040,6 +2085,7 @@ async function closeEvent(eventId) {
 }
 
 async function closeAllBetting() {
+  if (!requireHostMode()) return;
   const openMarkets = state.events.filter((event) => event.status === "open");
   if (openMarkets.length === 0) {
     await askConfirm({
@@ -2081,6 +2127,7 @@ async function closeAllBetting() {
 }
 
 async function resolveEvent(eventId) {
+  if (!requireHostMode()) return;
   const event = state.events.find((item) => item.id === eventId);
   const select = document.querySelector(`[data-outcome-select="${eventId}"]`);
   const customOutcome = document.querySelector(`[data-custom-outcome="${eventId}"]`)?.value.trim();
@@ -2171,6 +2218,7 @@ async function undoPayout(eventId) {
 }
 
 async function voidEvent(eventId) {
+  if (!requireHostMode()) return;
   const event = state.events.find((item) => item.id === eventId);
   if (!event || event.status !== "locked") return;
   const confirmed = await askConfirm({
@@ -2219,6 +2267,7 @@ function togglePlayer(playerId) {
 }
 
 async function adjustPlayer(playerId, type) {
+  if (!requireHostMode()) return;
   const player = state.players.find((item) => item.id === playerId);
   const input = document.querySelector(`[data-adjust-value="${playerId}"]`);
   const value = Math.floor(Number(input?.value));
@@ -2318,6 +2367,7 @@ function openBetDialog(eventId, playerId, betId = null) {
 }
 
 async function removePlayer(playerId) {
+  if (!requireHostMode()) return;
   const player = state.players.find((item) => item.id === playerId);
   if (!player) return;
 
@@ -2351,6 +2401,7 @@ async function removePlayer(playerId) {
 }
 
 async function removeEvent(eventId) {
+  if (!requireHostMode()) return;
   const event = state.events.find((item) => item.id === eventId);
   if (!event) return;
   const confirmed = await askConfirm({
@@ -2397,6 +2448,7 @@ els.playerForm.addEventListener("submit", async (event) => {
 
 els.sessionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!requireHostMode()) return;
   const title = els.sessionTitle.value.trim();
   if (!title) return;
   const defaultPlayerPoints = Math.floor(Number(els.defaultPlayerPoints.value));
@@ -2450,16 +2502,19 @@ els.eventForm.addEventListener("submit", async (event) => {
 });
 
 els.populateDefaultPlayers?.addEventListener("click", () => {
+  if (!requireHostMode()) return;
   renderOutcomeFields(buildSeededOutcomes(els.marketType.value));
 });
 
 els.marketType?.addEventListener("change", () => {
+  if (!requireHostMode()) return;
   const outcomes = getOutcomeFieldItems();
   if (!outcomes.some((outcome) => outcome.profileId)) return;
   renderOutcomeFields(refreshProfileSeededOutcomes(outcomes));
 });
 
 els.outcomeFields.addEventListener("keydown", (event) => {
+  if (!isHostMode()) return;
   if (event.key !== "Enter") return;
   if (!event.target.matches("[data-outcome-field]")) return;
   event.preventDefault();
@@ -2500,6 +2555,7 @@ document.addEventListener("click", (event) => {
     if (player) openPlayerBetDialog(playerBetButton.dataset.playerBet, player.id, playerBetButton.dataset.betId || null);
   }
   if (removeOutcomeButton) {
+    if (!requireHostMode()) return;
     const outcomes = getOutcomeFieldDraftItems();
     outcomes.splice(Number(removeOutcomeButton.dataset.removeOutcome), 1);
     renderOutcomeFields(outcomes.length >= 2 ? outcomes : ["", ""]);
@@ -2519,6 +2575,7 @@ document.addEventListener("toggle", (event) => {
 }, true);
 
 els.profilesList?.addEventListener("input", (event) => {
+  if (!requireHostMode()) return;
   const nameInput = event.target.closest("[data-profile-name]");
   const statInput = event.target.closest("[data-profile-stat]");
   if (nameInput) {
@@ -2537,6 +2594,7 @@ els.profilesList?.addEventListener("input", (event) => {
 });
 
 els.profilesList?.addEventListener("change", (event) => {
+  if (!requireHostMode()) return;
   const attendingInput = event.target.closest("[data-profile-attending]");
   if (!attendingInput) return;
   const profile = state.playerProfiles.find((item) => item.playerId === attendingInput.dataset.profileAttending);
@@ -2547,6 +2605,7 @@ els.profilesList?.addEventListener("change", (event) => {
 });
 
 els.addProfile?.addEventListener("click", () => {
+  if (!requireHostMode()) return;
   const baseName = "New Player";
   const profile = normalizeProfile({
     playerId: `${baseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${uid()}`,
@@ -2565,6 +2624,7 @@ els.addProfile?.addEventListener("click", () => {
 });
 
 async function removeProfile(playerId) {
+  if (!requireHostMode()) return;
   const profile = state.playerProfiles.find((item) => item.playerId === playerId);
   if (!profile) return;
   const confirmed = await askConfirm({
@@ -2580,6 +2640,7 @@ async function removeProfile(playerId) {
 }
 
 els.resetProfiles?.addEventListener("click", async () => {
+  if (!requireHostMode()) return;
   const confirmed = await askConfirm({
     title: "Reset profiles?",
     message: "Reset default player profiles back to the built-in ratings?",
@@ -2695,12 +2756,14 @@ function updatePlayerAutoRefresh() {
 }
 
 els.addOutcome.addEventListener("click", () => {
+  if (!requireHostMode()) return;
   const outcomes = getOutcomeFieldDraftItems();
   outcomes.push({ id: uid(), label: "" });
   renderOutcomeFields(outcomes);
 });
 
 els.addProfileOutcome?.addEventListener("click", () => {
+  if (!requireHostMode()) return;
   const profileId = els.profileOutcomeSelect.value;
   const profile = state.playerProfiles.find((item) => item.playerId === profileId);
   if (!profile) return;
@@ -2720,6 +2783,7 @@ els.addProfileOutcome?.addEventListener("click", () => {
 });
 
 els.bonusEnabled.addEventListener("change", () => {
+  if (!isHostMode()) return;
   els.bonusFields.hidden = !els.bonusEnabled.checked;
   if (els.bonusEnabled.checked) {
     els.bonusLabel.focus();
@@ -2743,6 +2807,7 @@ els.copyPlayerUrl?.addEventListener("click", async () => {
 });
 
 els.exportData.addEventListener("click", () => {
+  if (!requireHostMode()) return;
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -2753,6 +2818,7 @@ els.exportData.addEventListener("click", () => {
 });
 
 els.importData.addEventListener("change", async () => {
+  if (!requireHostMode()) return;
   const file = els.importData.files[0];
   if (!file) return;
   const imported = normalizeState(JSON.parse(await file.text()));
@@ -2768,6 +2834,7 @@ els.importData.addEventListener("change", async () => {
 });
 
 els.resetNight.addEventListener("click", async () => {
+  if (!requireHostMode()) return;
   const confirmed = await askConfirm({
     title: "Reset night?",
     message: "Reset all players, events, bets, and scores for this session?",
