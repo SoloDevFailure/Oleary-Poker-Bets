@@ -37,6 +37,7 @@ let hostAutoRefreshInFlight = false;
 const collapsedEvents = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-events") || "[]"));
 const expandedPlayers = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-players") || "[]"));
 const expandedOddsMenus = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-odds") || "[]"));
+const aiDisclaimerKey = "oleary-ai-ratings-disclaimer-seen";
 const seenWinPayoutsKey = `oleary-seen-win-payouts-${deviceKey}`;
 const seenWinPayouts = new Set(JSON.parse(localStorage.getItem(seenWinPayoutsKey) || "[]"));
 let winPopupsPrimed = localStorage.getItem(`${seenWinPayoutsKey}-primed`) === "yes";
@@ -131,6 +132,7 @@ const els = {
   syncStatus: document.querySelector("#syncStatus"),
   syncNow: document.querySelector("#syncNow"),
   confirmDialog: document.querySelector("#confirmDialog"),
+  aiDisclaimerDialog: document.querySelector("#aiDisclaimerDialog"),
   confirmKicker: document.querySelector("[data-confirm-kicker]"),
   confirmTitle: document.querySelector("[data-confirm-title]"),
   confirmMessage: document.querySelector("[data-confirm-message]"),
@@ -358,7 +360,7 @@ function getPlayerWinNotices(playerId) {
 }
 
 function checkPlayerWinPopups() {
-  if (appMode !== "player" || !els.winDialog || els.winDialog.open || els.confirmDialog.open) return;
+  if (appMode !== "player" || !els.winDialog || els.winDialog.open || els.confirmDialog.open || els.aiDisclaimerDialog?.open) return;
   const player = getCurrentPlayer();
   if (!player) return;
 
@@ -378,6 +380,21 @@ function checkPlayerWinPopups() {
   els.winAmount.textContent = money(freshNotice.amount);
   els.winMarket.textContent = freshNotice.marketName;
   els.winDialog.showModal();
+}
+
+function showAiDisclaimerOnce() {
+  if (appMode !== "player" || !els.aiDisclaimerDialog || localStorage.getItem(aiDisclaimerKey) === "yes") {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const dialog = els.aiDisclaimerDialog;
+    dialog.addEventListener("close", () => {
+      localStorage.setItem(aiDisclaimerKey, "yes");
+      resolve();
+    }, { once: true });
+    dialog.showModal();
+  });
 }
 
 function getPlayerJoinUrl() {
@@ -927,6 +944,7 @@ async function joinCurrentSession(name) {
   state.players.push(player);
   render();
   await loadRemoteState();
+  await showAiDisclaimerOnce();
 }
 
 async function saveRemoteSessionSettings(settings) {
