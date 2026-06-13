@@ -1,6 +1,7 @@
 const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
 const PLAYER_MARKETS_REFRESH_MS = 10000;
+const HOST_MARKETS_REFRESH_MS = 10000;
 const DEFAULT_SEED_POOL = 300;
 const MARKET_TYPES = ["Winner", "TopThree", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
 const PROFILE_STATS = ["skill", "survivability", "volatility", "consistency", "recentForm", "aggression"];
@@ -31,6 +32,8 @@ let activeTab = localStorage.getItem("poker-night-bets-active-tab") || "players"
 let activePlayerTab = localStorage.getItem("poker-night-bets-player-tab") || "profile";
 let playerAutoRefreshTimer = null;
 let playerAutoRefreshInFlight = false;
+let hostAutoRefreshTimer = null;
+let hostAutoRefreshInFlight = false;
 const collapsedEvents = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-events") || "[]"));
 const expandedPlayers = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-players") || "[]"));
 const expandedOddsMenus = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-odds") || "[]"));
@@ -701,6 +704,7 @@ async function loadRemoteState() {
   render();
   checkPlayerWinPopups();
   updatePlayerAutoRefresh();
+  updateHostAutoRefresh();
 }
 
 function groupBy(items, key) {
@@ -1335,6 +1339,7 @@ function renderTabs() {
   els.createMarketPanel.classList.toggle("active", showCreateMarket);
   els.eventsPanel.classList.toggle("active", showEvents);
   els.socialPanel.classList.toggle("active", showSocial);
+  updateHostAutoRefresh();
 }
 
 function renderPlayerTabs() {
@@ -1679,6 +1684,7 @@ function getPlayerActivity(playerId) {
     if (event.status === "resolved") paid += payout;
 
     rows.push(`
+      <div class="activity-entry">
       <div class="activity-row">
         <div>
           <strong>${escapeHtml(event.name)}</strong>
@@ -1686,10 +1692,44 @@ function getPlayerActivity(playerId) {
         </div>
         <span class="pill ${event.status}">${event.status === "resolved" ? `${net >= 0 ? "+" : ""}${money(net)}` : event.status}</span>
       </div>
+      ${renderPayoutBreakdown(event, playerId, bets, payout)}
+      </div>
     `);
   });
 
   return { rows, staked, paid, net: paid - staked };
+}
+
+function renderPayoutBreakdown(event, playerId, bets, payout) {
+  if (event.status !== "resolved" || payout <= 0 || !event.winningOutcome) return "";
+
+  const winningStake = bets
+    .filter((bet) => bet.outcome === event.winningOutcome)
+    .reduce((total, bet) => total + bet.value, 0);
+  if (winningStake <= 0) return "";
+
+  const totalWinningStake = event.bets
+    .filter((bet) => bet.outcome === event.winningOutcome)
+    .reduce((total, bet) => total + bet.value, 0);
+  if (totalWinningStake <= 0) return "";
+
+  const prizePool = getEventPool(event) * (1 - TAX_RATE);
+  const share = winningStake / totalWinningStake;
+
+  return `
+    <details class="payout-breakdown">
+      <summary>Payout breakdown</summary>
+      <div class="payout-breakdown-grid">
+        <span>Your stake</span><strong>${money(winningStake)}</strong>
+        <span>Winning outcome</span><strong>${escapeHtml(event.winningOutcome)}</strong>
+        <span>Total winning stake</span><strong>${money(totalWinningStake)}</strong>
+        <span>Prize pool after tax</span><strong>${money(prizePool)}</strong>
+        <span>Your share</span><strong>${formatRatio(share * 100)}%</strong>
+        ${event.bonusAwarded ? `<span>Bonus included</span><strong>${money(Number(event.bonusPoints || 0) * share)}</strong>` : ""}
+        <span>Final payout</span><strong>${money(payout)}</strong>
+      </div>
+    </details>
+  `;
 }
 
 function renderEvents() {
@@ -1862,7 +1902,9 @@ function renderOdds(event, { showTotals = true } = {}) {
 
   return outcomes.map((outcome) => {
     const item = oddsByOutcome.get(outcome);
-    const displayOdds = item && item.total > 0 ? formatOdds(getDisplayProfitPerPoint(event, item)) : "Syncing odds";
+    const profitPerPoint = item && item.total > 0 ? getDisplayProfitPerPoint(event, item) : null;
+    const displayOdds = profitPerPoint === null ? "Syncing odds" : formatOdds(profitPerPoint);
+    const oddsTone = profitPerPoint !== null && profitPerPoint < 1 ? "bad-odds" : profitPerPoint > 15 ? "good-odds" : "";
     const backed = item ? item.realTotal : 0;
     return `
       <div class="odds-row ${showTotals ? "" : "odds-row-compact"}">
@@ -1871,7 +1913,7 @@ function renderOdds(event, { showTotals = true } = {}) {
           <span class="muted">Option</span>
         </div>
         <div class="odds-stat">
-          <strong>${displayOdds}</strong>
+          <strong class="odds-value ${oddsTone}">${displayOdds}</strong>
           <span class="muted">Odds</span>
         </div>
         ${showTotals ? `
@@ -2304,12 +2346,28 @@ function openBetDialog(eventId, playerId, betId = null) {
   const outcomeChoice = fragment.querySelector("[data-outcome-choice]");
   const removeButton = fragment.querySelector("[data-remove-bet]");
   const outcomes = getEventOutcomes(event);
-  const existingOutcomeInList = existingBet && outcomes.includes(existingBet.outcome);
+  const blockedOutcomes = new Set(
+    event.bets
+      .filter((item) => item.playerId === playerId && item.id !== existingBet?.id)
+      .map((item) => item.outcome)
+  );
+  const selectableOutcomes = outcomes.filter((outcome) => !blockedOutcomes.has(outcome));
+  const existingOutcomeInList = existingBet && selectableOutcomes.includes(existingBet.outcome);
 
   if (outcomes.length === 0) {
     askConfirm({
       title: "No outcomes yet",
       message: "Add outcome options when creating the market before taking bets.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  if (selectableOutcomes.length === 0) {
+    askConfirm({
+      title: "No outcomes left",
+      message: "This player already has a bet on every available outcome. Edit an existing bet instead.",
       action: "OK",
       notice: true,
     });
@@ -2324,7 +2382,7 @@ function openBetDialog(eventId, playerId, betId = null) {
   removeButton.disabled = !existingBet;
   outcomeChoice.innerHTML = `
     <option value="">Choose outcome...</option>
-    ${outcomes.map((outcome) => `<option value="${escapeAttr(outcome)}">${escapeHtml(outcome)}</option>`).join("")}
+    ${selectableOutcomes.map((outcome) => `<option value="${escapeAttr(outcome)}">${escapeHtml(outcome)}</option>`).join("")}
   `;
 
   if (existingOutcomeInList) {
@@ -2756,6 +2814,34 @@ function updatePlayerAutoRefresh() {
   }, PLAYER_MARKETS_REFRESH_MS);
 }
 
+function shouldAutoRefreshHostMarkets() {
+  return appMode === "host"
+    && activeTab === "events"
+    && remoteReady()
+    && document.visibilityState === "visible";
+}
+
+function updateHostAutoRefresh() {
+  if (!shouldAutoRefreshHostMarkets()) {
+    if (hostAutoRefreshTimer) {
+      clearInterval(hostAutoRefreshTimer);
+      hostAutoRefreshTimer = null;
+    }
+    return;
+  }
+
+  if (hostAutoRefreshTimer) return;
+  hostAutoRefreshTimer = setInterval(async () => {
+    if (!shouldAutoRefreshHostMarkets() || hostAutoRefreshInFlight) return;
+    hostAutoRefreshInFlight = true;
+    try {
+      await refreshSharedState({ quiet: true });
+    } finally {
+      hostAutoRefreshInFlight = false;
+    }
+  }, HOST_MARKETS_REFRESH_MS);
+}
+
 els.addOutcome.addEventListener("click", () => {
   if (!requireHostMode()) return;
   const outcomes = getOutcomeFieldDraftItems();
@@ -2872,7 +2958,10 @@ document.querySelectorAll("[data-player-tab]").forEach((button) => {
   });
 });
 
-document.addEventListener("visibilitychange", updatePlayerAutoRefresh);
+document.addEventListener("visibilitychange", () => {
+  updatePlayerAutoRefresh();
+  updateHostAutoRefresh();
+});
 
 renderOutcomeFields();
 render();

@@ -594,9 +594,32 @@ h3 {
   padding: 0.55rem;
 }
 
+.activity-entry {
+  display: grid;
+  gap: 0.35rem;
+}
+
 .activity-row > div {
   display: grid;
   gap: 0.15rem;
+}
+
+.payout-breakdown {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.45rem 0.55rem;
+}
+
+.payout-breakdown summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.payout-breakdown-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.45rem;
 }
 
 .activity-row.bonus {
@@ -725,6 +748,14 @@ h3 {
 
 .odds-stat {
   text-align: right;
+}
+
+.odds-value.bad-odds {
+  color: var(--danger);
+}
+
+.odds-value.good-odds {
+  color: var(--accent);
 }
 
 .bet-name {
