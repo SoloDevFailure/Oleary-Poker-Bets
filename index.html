@@ -108,6 +108,7 @@
           </form>
           <div class="session-actions">
             <button id="showPlayerQr" class="ghost" type="button">Show QR code</button>
+            <button id="giveAllPoints" class="ghost" type="button">Give points to all players</button>
             <button id="closeAllBetting" type="button">Close all betting</button>
           </div>
           <p class="muted session-note">Player mode will use these settings when people join the session.</p>
@@ -270,6 +271,26 @@
         <div class="dialog-actions">
           <button value="cancel" class="ghost" data-confirm-cancel autofocus>Cancel</button>
           <button value="confirm" data-confirm-action>Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="giveAllDialog" class="confirm-dialog">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Session bonus</p>
+            <h2>Give points to all players</h2>
+          </div>
+          <button value="cancel" class="icon-button" aria-label="Close">x</button>
+        </div>
+        <label>
+          Points to add
+          <input id="giveAllPointsValue" type="number" min="1" step="1" placeholder="e.g. 100" />
+        </label>
+        <div class="dialog-actions">
+          <button value="cancel" class="ghost">Cancel</button>
+          <button value="confirm">Give to all players</button>
         </div>
       </form>
     </dialog>

@@ -1,7 +1,6 @@
 const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
 const PLAYER_MARKETS_REFRESH_MS = 10000;
-const HOST_MARKETS_REFRESH_MS = 10000;
 const DEFAULT_SEED_POOL = 300;
 const MARKET_TYPES = ["Winner", "TopThree", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
 const PROFILE_STATS = ["skill", "survivability", "volatility", "consistency", "recentForm", "aggression"];
@@ -32,8 +31,6 @@ let activeTab = localStorage.getItem("poker-night-bets-active-tab") || "players"
 let activePlayerTab = localStorage.getItem("poker-night-bets-player-tab") || "profile";
 let playerAutoRefreshTimer = null;
 let playerAutoRefreshInFlight = false;
-let hostAutoRefreshTimer = null;
-let hostAutoRefreshInFlight = false;
 const collapsedEvents = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-events") || "[]"));
 const expandedPlayers = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-players") || "[]"));
 const expandedOddsMenus = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-odds") || "[]"));
@@ -134,6 +131,9 @@ const els = {
   hostSocialList: document.querySelector("#hostSocialList"),
   sessionPanel: document.querySelector("#sessionPanel"),
   showPlayerQr: document.querySelector("#showPlayerQr"),
+  giveAllPoints: document.querySelector("#giveAllPoints"),
+  giveAllDialog: document.querySelector("#giveAllDialog"),
+  giveAllPointsValue: document.querySelector("#giveAllPointsValue"),
   closeAllBetting: document.querySelector("#closeAllBetting"),
   syncStatus: document.querySelector("#syncStatus"),
   syncNow: document.querySelector("#syncNow"),
@@ -793,7 +793,6 @@ async function loadRemoteState() {
   render();
   checkPlayerWinPopups();
   updatePlayerAutoRefresh();
-  updateHostAutoRefresh();
 }
 
 function groupBy(items, key) {
@@ -1447,7 +1446,6 @@ function renderTabs() {
   els.createMarketPanel.classList.toggle("active", showCreateMarket);
   els.eventsPanel.classList.toggle("active", showEvents);
   els.socialPanel.classList.toggle("active", showSocial);
-  updateHostAutoRefresh();
 }
 
 function renderPlayerTabs() {
@@ -2453,6 +2451,43 @@ async function adjustPlayer(playerId, type) {
   });
 }
 
+function openGiveAllPointsDialog() {
+  if (!requireHostMode()) return;
+  if (state.players.length === 0) {
+    askConfirm({
+      title: "No players yet",
+      message: "Add players before giving points to everyone.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  els.giveAllPointsValue.value = "";
+  els.giveAllDialog.showModal();
+  els.giveAllPointsValue.focus();
+}
+
+async function givePointsToAllPlayers(value) {
+  if (!requireHostMode()) return;
+  const points = Math.floor(Number(value));
+  if (!Number.isFinite(points) || points <= 0 || state.players.length === 0) return;
+
+  const createdAt = new Date().toISOString();
+  const adjustments = state.players.map((player) => {
+    player.points += points;
+    player.adjustments = Array.isArray(player.adjustments) ? player.adjustments : [];
+    const adjustment = { id: uid(), type: "bonus", value: points, createdAt };
+    player.adjustments.push(adjustment);
+    return { player, adjustment };
+  });
+
+  render();
+  await runRemote(async () => {
+    await Promise.all(adjustments.map(({ player, adjustment }) => saveRemoteAdjustment(player, adjustment)));
+  });
+}
+
 function openBetDialog(eventId, playerId, betId = null) {
   const event = state.events.find((item) => item.id === eventId);
   const player = state.players.find((item) => item.id === playerId);
@@ -2950,34 +2985,6 @@ function updatePlayerAutoRefresh() {
   }, PLAYER_MARKETS_REFRESH_MS);
 }
 
-function shouldAutoRefreshHostMarkets() {
-  return appMode === "host"
-    && activeTab === "events"
-    && remoteReady()
-    && document.visibilityState === "visible";
-}
-
-function updateHostAutoRefresh() {
-  if (!shouldAutoRefreshHostMarkets()) {
-    if (hostAutoRefreshTimer) {
-      clearInterval(hostAutoRefreshTimer);
-      hostAutoRefreshTimer = null;
-    }
-    return;
-  }
-
-  if (hostAutoRefreshTimer) return;
-  hostAutoRefreshTimer = setInterval(async () => {
-    if (!shouldAutoRefreshHostMarkets() || hostAutoRefreshInFlight) return;
-    hostAutoRefreshInFlight = true;
-    try {
-      await refreshSharedState({ quiet: true });
-    } finally {
-      hostAutoRefreshInFlight = false;
-    }
-  }, HOST_MARKETS_REFRESH_MS);
-}
-
 els.addOutcome.addEventListener("click", () => {
   if (!requireHostMode()) return;
   const outcomes = getOutcomeFieldDraftItems();
@@ -3015,6 +3022,17 @@ els.bonusEnabled.addEventListener("change", () => {
 
 els.closeAllBetting.addEventListener("click", closeAllBetting);
 els.showPlayerQr?.addEventListener("click", showPlayerQrCode);
+els.giveAllPoints?.addEventListener("click", openGiveAllPointsDialog);
+els.giveAllDialog?.addEventListener("close", () => {
+  if (els.giveAllDialog.returnValue !== "confirm") return;
+  givePointsToAllPlayers(els.giveAllPointsValue.value);
+});
+els.giveAllDialog?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  if (!event.target.matches("input")) return;
+  event.preventDefault();
+  els.giveAllDialog.close("confirm");
+});
 els.refreshPlayerMarkets?.addEventListener("click", refreshSharedState);
 els.copyPlayerUrl?.addEventListener("click", async () => {
   const playerUrl = getPlayerJoinUrl();
@@ -3100,7 +3118,6 @@ document.querySelectorAll("[data-player-tab]").forEach((button) => {
 
 document.addEventListener("visibilitychange", () => {
   updatePlayerAutoRefresh();
-  updateHostAutoRefresh();
 });
 
 renderOutcomeFields();
