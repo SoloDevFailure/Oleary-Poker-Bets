@@ -152,6 +152,14 @@ const els = {
   winDialog: document.querySelector("#winDialog"),
   winAmount: document.querySelector("[data-win-amount]"),
   winMarket: document.querySelector("[data-win-market]"),
+  winPickRow: document.querySelector("[data-win-pick-row]"),
+  winPick: document.querySelector("[data-win-pick]"),
+  winStakeRow: document.querySelector("[data-win-stake-row]"),
+  winStake: document.querySelector("[data-win-stake]"),
+  winProfitRow: document.querySelector("[data-win-profit-row]"),
+  winProfit: document.querySelector("[data-win-profit]"),
+  winBalanceRow: document.querySelector("[data-win-balance-row]"),
+  winBalance: document.querySelector("[data-win-balance]"),
 };
 
 function uid() {
@@ -357,12 +365,22 @@ function markWinPopupsPrimed() {
 function getPlayerWinNotices(playerId) {
   return state.events.flatMap((event) => getEventPayouts(event)
     .filter((payout) => payout.playerId === playerId)
-    .map((payout) => ({
-      id: `${event.remoteId || event.id}:${payout.id || payout.playerId}:${Number(payout.amount).toFixed(4)}`,
-      marketName: event.name,
-      amount: payout.amount,
-      createdAt: payout.createdAt || event.resolvedAt || event.createdAt || "",
-    })));
+    .map((payout) => {
+      const winningStake = event.bets
+        .filter((bet) => bet.playerId === playerId && bet.outcome === event.winningOutcome)
+        .reduce((total, bet) => total + Number(bet.value || 0), 0);
+      const player = state.players.find((item) => item.id === playerId);
+      return {
+        id: `${event.remoteId || event.id}:${payout.id || payout.playerId}:${Number(payout.amount).toFixed(4)}`,
+        marketName: event.name,
+        amount: payout.amount,
+        winningOutcome: event.winningOutcome || "",
+        stake: winningStake,
+        profit: winningStake > 0 ? Number(payout.amount || 0) - winningStake : null,
+        balance: player ? player.points : null,
+        createdAt: payout.createdAt || event.resolvedAt || event.createdAt || "",
+      };
+    }));
 }
 
 function checkPlayerWinPopups() {
@@ -383,9 +401,57 @@ function checkPlayerWinPopups() {
 
   seenWinPayouts.add(freshNotice.id);
   saveSeenWinPayouts();
-  els.winAmount.textContent = money(freshNotice.amount);
-  els.winMarket.textContent = freshNotice.marketName;
+  renderWinPopup(freshNotice);
   els.winDialog.showModal();
+  animateWinAmount(freshNotice.amount);
+}
+
+function renderWinPopup(notice) {
+  els.winAmount.textContent = formatWinAmount(notice.amount);
+  els.winAmount.classList.remove("final-pop");
+  els.winMarket.textContent = notice.marketName || "this market";
+  setWinSlipRow(els.winPickRow, els.winPick, notice.winningOutcome);
+  setWinSlipRow(els.winStakeRow, els.winStake, notice.stake > 0 ? money(notice.stake) : "");
+  setWinSlipRow(els.winProfitRow, els.winProfit, Number.isFinite(notice.profit) ? `${notice.profit >= 0 ? "+" : ""}${money(notice.profit)}` : "");
+  setWinSlipRow(els.winBalanceRow, els.winBalance, Number.isFinite(notice.balance) ? money(notice.balance) : "");
+}
+
+function setWinSlipRow(row, valueEl, value) {
+  if (!row || !valueEl) return;
+  const hasValue = value !== null && value !== undefined && value !== "";
+  row.hidden = !hasValue;
+  if (hasValue) valueEl.textContent = value;
+}
+
+function formatWinAmount(value) {
+  return `+${money(value)} points`;
+}
+
+function animateWinAmount(finalAmount) {
+  if (!els.winAmount) return;
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  if (reducedMotion) {
+    els.winAmount.textContent = formatWinAmount(finalAmount);
+    return;
+  }
+
+  const duration = 850;
+  const start = performance.now();
+  els.winAmount.classList.remove("final-pop");
+
+  function tick(now) {
+    const progress = Math.min((now - start) / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    els.winAmount.textContent = formatWinAmount(finalAmount * eased);
+    if (progress < 1) {
+      requestAnimationFrame(tick);
+      return;
+    }
+    els.winAmount.textContent = formatWinAmount(finalAmount);
+    els.winAmount.classList.add("final-pop");
+  }
+
+  requestAnimationFrame(tick);
 }
 
 function showAiDisclaimerOnce() {

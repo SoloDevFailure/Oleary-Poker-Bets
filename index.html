@@ -296,9 +296,15 @@
     <dialog id="winDialog" class="win-dialog">
       <form method="dialog" class="win-card">
         <div class="win-trophy" aria-hidden="true">🏆</div>
-        <p class="eyebrow">You did it</p>
-        <h2>You won <span data-win-amount>0</span> points</h2>
-        <p class="muted">on <strong data-win-market>this market</strong></p>
+        <p class="eyebrow">BIG WIN</p>
+        <h2 class="win-amount" data-win-amount>+0 points</h2>
+        <div class="win-slip">
+          <p><span>Market</span><strong data-win-market>this market</strong></p>
+          <p data-win-pick-row hidden><span>Winning pick</span><strong data-win-pick></strong></p>
+          <p data-win-stake-row hidden><span>Stake</span><strong data-win-stake></strong></p>
+          <p data-win-profit-row hidden><span>Profit</span><strong data-win-profit></strong></p>
+          <p data-win-balance-row hidden><span>New balance</span><strong data-win-balance></strong></p>
+        </div>
         <button value="ok">Okay</button>
       </form>
     </dialog>
