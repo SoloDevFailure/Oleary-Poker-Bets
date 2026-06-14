@@ -156,6 +156,8 @@ const els = {
   winPick: document.querySelector("[data-win-pick]"),
   winStakeRow: document.querySelector("[data-win-stake-row]"),
   winStake: document.querySelector("[data-win-stake]"),
+  winBonusRow: document.querySelector("[data-win-bonus-row]"),
+  winBonus: document.querySelector("[data-win-bonus]"),
   winProfitRow: document.querySelector("[data-win-profit-row]"),
   winProfit: document.querySelector("[data-win-profit]"),
   winBalanceRow: document.querySelector("[data-win-balance-row]"),
@@ -369,13 +371,19 @@ function getPlayerWinNotices(playerId) {
       const winningStake = event.bets
         .filter((bet) => bet.playerId === playerId && bet.outcome === event.winningOutcome)
         .reduce((total, bet) => total + Number(bet.value || 0), 0);
+      const totalWinningStake = event.bets
+        .filter((bet) => bet.outcome === event.winningOutcome)
+        .reduce((total, bet) => total + Number(bet.value || 0), 0);
+      const share = totalWinningStake > 0 ? winningStake / totalWinningStake : 0;
+      const bonusAmount = event.bonusAwarded ? Number(event.bonusPoints || 0) * share : 0;
       const player = state.players.find((item) => item.id === playerId);
       return {
-        id: `${event.remoteId || event.id}:${payout.id || payout.playerId}:${Number(payout.amount).toFixed(4)}`,
+        id: `${event.remoteId || event.id}:${payout.id || payout.playerId}:${Number(payout.noticeAmount ?? payout.amount).toFixed(4)}`,
         marketName: event.name,
         amount: payout.amount,
         winningOutcome: event.winningOutcome || "",
         stake: winningStake,
+        bonusAmount,
         profit: winningStake > 0 ? Number(payout.amount || 0) - winningStake : null,
         balance: player ? player.points : null,
         createdAt: payout.createdAt || event.resolvedAt || event.createdAt || "",
@@ -412,6 +420,7 @@ function renderWinPopup(notice) {
   els.winMarket.textContent = notice.marketName || "this market";
   setWinSlipRow(els.winPickRow, els.winPick, notice.winningOutcome);
   setWinSlipRow(els.winStakeRow, els.winStake, notice.stake > 0 ? money(notice.stake) : "");
+  setWinSlipRow(els.winBonusRow, els.winBonus, notice.bonusAmount > 0 ? `+${money(notice.bonusAmount)}` : "");
   setWinSlipRow(els.winProfitRow, els.winProfit, Number.isFinite(notice.profit) ? `${notice.profit >= 0 ? "+" : ""}${money(notice.profit)}` : "");
   setWinSlipRow(els.winBalanceRow, els.winBalance, Number.isFinite(notice.balance) ? money(notice.balance) : "");
 }
@@ -634,13 +643,17 @@ function refreshProfileSeededOutcomes(outcomes) {
 
 function getEventPayouts(event) {
   if (Array.isArray(event.payouts) && event.payouts.length > 0) {
-    return event.payouts;
+    return normalizeStoredPayouts(event, event.payouts);
   }
 
   if (event.status !== "resolved" || !event.winningOutcome) {
     return [];
   }
 
+  return calculateEventPayouts(event, Boolean(event.bonusAwarded));
+}
+
+function calculateEventPayouts(event, bonusAwarded = false) {
   const pool = getEventPool(event);
   const taxedPool = pool * (1 - TAX_RATE);
   const winnerTotal = event.bets
@@ -652,11 +665,34 @@ function getEventPayouts(event) {
   const payoutsByPlayer = event.bets
     .filter((bet) => bet.outcome === event.winningOutcome)
     .reduce((totals, bet) => {
-      totals[bet.playerId] = (totals[bet.playerId] || 0) + (bet.value / winnerTotal) * taxedPool;
+      const share = bet.value / winnerTotal;
+      const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * share : 0;
+      totals[bet.playerId] = (totals[bet.playerId] || 0) + share * taxedPool + bonusAmount;
       return totals;
     }, {});
 
   return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
+}
+
+function normalizeStoredPayouts(event, payouts) {
+  if (!event.bonusAwarded || Number(event.bonusPoints || 0) <= 0) return payouts;
+
+  const basePayouts = calculateEventPayouts(event, false);
+  const fullPayouts = calculateEventPayouts(event, true);
+  if (!basePayouts.length || !fullPayouts.length) return payouts;
+
+  const storedTotal = payouts.reduce((total, payout) => total + Number(payout.amount || 0), 0);
+  const baseTotal = basePayouts.reduce((total, payout) => total + Number(payout.amount || 0), 0);
+  const fullTotal = fullPayouts.reduce((total, payout) => total + Number(payout.amount || 0), 0);
+  const missingBonus = Math.abs(storedTotal - baseTotal) < 0.01 && Math.abs(fullTotal - baseTotal) > 0.01;
+  if (!missingBonus) return payouts;
+
+  const storedByPlayer = new Map(payouts.map((payout) => [payout.playerId, payout]));
+  return fullPayouts.map((payout) => ({
+    ...(storedByPlayer.get(payout.playerId) || {}),
+    ...payout,
+    noticeAmount: storedByPlayer.get(payout.playerId)?.amount,
+  }));
 }
 
 function remoteReady() {
@@ -1192,7 +1228,7 @@ async function saveRemotePayouts(event) {
   if (!remoteReady() || !event.remoteId) return;
 
   await remote.client.from("payouts").delete().eq("market_id", event.remoteId);
-  const rows = (event.payouts || []).map((payout) => {
+  const rows = getEventPayouts(event).map((payout) => {
     const player = state.players.find((item) => item.id === payout.playerId);
     if (!player?.remoteId) return null;
     return {
@@ -2313,31 +2349,24 @@ async function resolveEvent(eventId) {
     event.lockedAt = event.lockedAt || new Date().toISOString();
   }
 
-  const pool = getEventPool(event);
-  const taxedPool = pool * (1 - TAX_RATE);
   const winnerTotal = event.bets
     .filter((bet) => bet.outcome === winningOutcome)
     .reduce((total, bet) => total + bet.value, 0);
-  const payoutsByPlayer = {};
+  event.winningOutcome = winningOutcome;
+  event.bonusAwarded = bonusAwarded;
+  const payouts = calculateEventPayouts(event, bonusAwarded);
 
   if (winnerTotal > 0) {
-    event.bets.forEach((bet) => {
-      if (bet.outcome !== winningOutcome) return;
-      const player = state.players.find((item) => item.id === bet.playerId);
-      const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * (bet.value / winnerTotal) : 0;
-      const amount = (bet.value / winnerTotal) * taxedPool + bonusAmount;
+    payouts.forEach((payout) => {
+      const player = state.players.find((item) => item.id === payout.playerId);
       if (player) {
-        player.points += amount;
-        payoutsByPlayer[player.id] = (payoutsByPlayer[player.id] || 0) + amount;
+        player.points += payout.amount;
       }
     });
   }
-  const payouts = Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
 
   event.status = "resolved";
-  event.winningOutcome = winningOutcome;
   event.payouts = payouts;
-  event.bonusAwarded = bonusAwarded;
   event.resolvedAt = new Date().toISOString();
   collapsedEvents.add(event.id);
   saveCollapsedEvents();
