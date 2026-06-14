@@ -2,7 +2,7 @@ const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
 const PLAYER_MARKETS_REFRESH_MS = 10000;
 const DEFAULT_SEED_POOL = 300;
-const MARKET_TYPES = ["Winner", "TopThree", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
+const MARKET_TYPES = ["Winner", "TopThree", "TopThreeCombo", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
 const PROFILE_STATS = ["skill", "survivability", "volatility", "consistency", "recentForm", "aggression"];
 const DEFAULT_PLAYER_PROFILES = [
   { playerId: "dan", playerName: "Dan", skill: 92, survivability: 88, volatility: 28, consistency: 92, recentForm: 88, aggression: 70 },
@@ -368,20 +368,26 @@ function getPlayerWinNotices(playerId) {
   return state.events.flatMap((event) => getEventPayouts(event)
     .filter((payout) => payout.playerId === playerId)
     .map((payout) => {
-      const winningStake = event.bets
-        .filter((bet) => bet.playerId === playerId && bet.outcome === event.winningOutcome)
-        .reduce((total, bet) => total + Number(bet.value || 0), 0);
-      const totalWinningStake = event.bets
+      const comboDetails = isTopThreeComboMarket(event)
+        ? getComboBetDetails(event, event.bets.filter((bet) => bet.playerId === playerId))
+        : null;
+      const winningStake = comboDetails
+        ? comboDetails.rows.reduce((total, row) => row.weightedStake > 0 ? total + Number(row.bet.value || 0) : total, 0)
+        : event.bets
+          .filter((bet) => bet.playerId === playerId && bet.outcome === event.winningOutcome)
+          .reduce((total, bet) => total + Number(bet.value || 0), 0);
+      const totalWinningStake = comboDetails?.totalWeightedStake ?? event.bets
         .filter((bet) => bet.outcome === event.winningOutcome)
         .reduce((total, bet) => total + Number(bet.value || 0), 0);
-      const share = totalWinningStake > 0 ? winningStake / totalWinningStake : 0;
+      const playerWeightedStake = comboDetails?.playerWeightedStake ?? winningStake;
+      const share = totalWinningStake > 0 ? playerWeightedStake / totalWinningStake : 0;
       const bonusAmount = event.bonusAwarded ? Number(event.bonusPoints || 0) * share : 0;
       const player = state.players.find((item) => item.id === playerId);
       return {
         id: `${event.remoteId || event.id}:${payout.id || payout.playerId}:${Number(payout.noticeAmount ?? payout.amount).toFixed(4)}`,
         marketName: event.name,
         amount: payout.amount,
-        winningOutcome: event.winningOutcome || "",
+        winningOutcome: getComboResultLabel(event),
         stake: winningStake,
         bonusAmount,
         profit: winningStake > 0 ? Number(payout.amount || 0) - winningStake : null,
@@ -546,6 +552,14 @@ function getSeedPool(event) {
 
 function getOutcomeTotals(event) {
   return event.bets.reduce((totals, bet) => {
+    if (isTopThreeComboMarket(event)) {
+      const selections = getComboSelections(bet);
+      const share = selections.length ? bet.value / selections.length : 0;
+      selections.forEach((selection) => {
+        totals[selection] = (totals[selection] || 0) + share;
+      });
+      return totals;
+    }
     totals[bet.outcome] = (totals[bet.outcome] || 0) + bet.value;
     return totals;
   }, {});
@@ -591,6 +605,7 @@ function getProfileWeight(profile, marketType) {
     case "Winner":
       return profile.skill * 0.45 + profile.survivability * 0.25 + profile.recentForm * 0.20 + profile.aggression * 0.10;
     case "TopThree":
+    case "TopThreeCombo":
     case "LastLonger":
       return profile.survivability * 0.40 + profile.consistency * 0.30 + profile.skill * 0.20 + profile.recentForm * 0.10;
     case "FirstOut":
@@ -646,7 +661,7 @@ function getEventPayouts(event) {
     return normalizeStoredPayouts(event, event.payouts);
   }
 
-  if (event.status !== "resolved" || !event.winningOutcome) {
+  if (event.status !== "resolved" || (!event.winningOutcome && !isTopThreeComboMarket(event))) {
     return [];
   }
 
@@ -654,6 +669,10 @@ function getEventPayouts(event) {
 }
 
 function calculateEventPayouts(event, bonusAwarded = false) {
+  if (isTopThreeComboMarket(event)) {
+    return calculateComboEventPayouts(event, bonusAwarded);
+  }
+
   const pool = getEventPool(event);
   const taxedPool = pool * (1 - TAX_RATE);
   const winnerTotal = event.bets
@@ -670,6 +689,104 @@ function calculateEventPayouts(event, bonusAwarded = false) {
       totals[bet.playerId] = (totals[bet.playerId] || 0) + share * taxedPool + bonusAmount;
       return totals;
     }, {});
+
+  return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
+}
+
+function isTopThreeComboMarket(event) {
+  return event?.profileMarketType === "TopThreeCombo";
+}
+
+function getComboSelections(bet) {
+  return Array.isArray(bet?.selections)
+    ? bet.selections.map(normalizeOutcomeLabel).filter(Boolean).slice(0, 3)
+    : [];
+}
+
+function getComboKey(selections) {
+  return [...new Set((selections || []).map(normalizeOutcomeLabel).filter(Boolean))]
+    .map((item) => item.toLowerCase())
+    .sort()
+    .join("|");
+}
+
+function getComboMatchCount(selections, result) {
+  const resultSet = new Set((result || []).map((item) => normalizeOutcomeLabel(item).toLowerCase()));
+  return getComboSelections({ selections })
+    .filter((item) => resultSet.has(item.toLowerCase()))
+    .length;
+}
+
+function getComboMatchWeight(matchCount) {
+  if (matchCount >= 3) return 5;
+  if (matchCount === 2) return 2;
+  if (matchCount === 1) return 0.5;
+  return 0;
+}
+
+function getComboResult(event) {
+  return Array.isArray(event?.winningSelections) ? event.winningSelections.map(normalizeOutcomeLabel).filter(Boolean).slice(0, 3) : [];
+}
+
+function getComboResultLabel(event) {
+  const result = getComboResult(event);
+  return result.length ? result.join(", ") : event?.winningOutcome || "Not set";
+}
+
+function getBetPickText(bet) {
+  const selections = getComboSelections(bet);
+  if (selections.length) return selections.join(", ");
+  return bet?.outcome || "Unknown outcome";
+}
+
+function getComboBetDetails(event, bets) {
+  const result = getComboResult(event);
+  const rows = (bets || []).map((bet) => {
+    const selections = getComboSelections(bet);
+    const matchCount = getComboMatchCount(selections, result);
+    const matchWeight = getComboMatchWeight(matchCount);
+    return {
+      bet,
+      selections,
+      matchCount,
+      matchWeight,
+      weightedStake: Number(bet.value || 0) * matchWeight,
+    };
+  });
+  const totalWeightedStake = event.bets.reduce((total, bet) => {
+    const matchCount = getComboMatchCount(getComboSelections(bet), result);
+    return total + Number(bet.value || 0) * getComboMatchWeight(matchCount);
+  }, 0);
+  const playerWeightedStake = rows.reduce((total, row) => total + row.weightedStake, 0);
+  return { result, rows, totalWeightedStake, playerWeightedStake };
+}
+
+function calculateComboEventPayouts(event, bonusAwarded = false) {
+  const result = getComboResult(event);
+  if (result.length !== 3) return [];
+
+  const weightedRows = event.bets
+    .map((bet) => {
+      const matchCount = getComboMatchCount(getComboSelections(bet), result);
+      const matchWeight = getComboMatchWeight(matchCount);
+      return {
+        playerId: bet.playerId,
+        weightedStake: Number(bet.value || 0) * matchWeight,
+      };
+    })
+    .filter((row) => row.weightedStake > 0);
+
+  const totalWeightedStake = weightedRows.reduce((total, row) => total + row.weightedStake, 0);
+  if (totalWeightedStake <= 0) return [];
+
+  const pool = getEventPool(event);
+  const taxedPool = pool * (1 - TAX_RATE);
+  const payoutsByPlayer = weightedRows.reduce((totals, row) => {
+    const share = row.weightedStake / totalWeightedStake;
+    const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * share : 0;
+    totals[row.playerId] = (totals[row.playerId] || 0) + share * taxedPool + bonusAmount;
+    return totals;
+  }, {});
 
   return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
 }
@@ -778,6 +895,7 @@ async function loadRemoteState() {
       bonusAwarded: Boolean(selection.bonus_awarded),
       profileMarketType: selection.market_type || "Custom",
       seedPool: Number(selection.seed_pool || 0),
+      winningSelections: Array.isArray(selection.combo_result) ? selection.combo_result.map(normalizeOutcomeLabel).filter(Boolean).slice(0, 3) : [],
       winningOutcome,
       createdAt: market.created_at,
       lockedAt: market.locked_at,
@@ -785,12 +903,16 @@ async function loadRemoteState() {
       stakesLocked: Boolean(market.locked_at || market.resolved_at || market.voided_at),
       bets: (betsByMarket.get(market.id) || []).map((bet) => {
         const outcome = outcomesById.get(bet.outcome_id);
+        const selections = Array.isArray(bet.selections)
+          ? bet.selections.map((selectionId) => outcomesById.get(selectionId)?.label || selectionId).map(normalizeOutcomeLabel).filter(Boolean)
+          : [];
         return {
           id: bet.client_id || bet.id,
           remoteId: bet.id,
           playerId: playerIdByRemoteId.get(bet.player_id),
           value: Number(bet.stake),
           outcome: outcome?.label || "Unknown outcome",
+          selections,
           outcomeRemoteId: bet.outcome_id,
           createdAt: bet.created_at,
           updatedAt: bet.updated_at,
@@ -899,7 +1021,7 @@ async function saveRemoteMarket(event) {
       .maybeSingle();
     if (error) throw error;
     if (updated) {
-      if (event.winningOutcome && event.status === "resolved") {
+      if (event.winningOutcome && event.status === "resolved" && !isTopThreeComboMarket(event)) {
         const outcome = await ensureRemoteOutcome(event, event.winningOutcome);
         const { error: winningError } = await remote.client
           .from("markets")
@@ -923,7 +1045,7 @@ async function saveRemoteMarket(event) {
 
   if (error) throw error;
   event.remoteId = data.id;
-  if (event.winningOutcome && event.status === "resolved") {
+  if (event.winningOutcome && event.status === "resolved" && !isTopThreeComboMarket(event)) {
     const outcome = await ensureRemoteOutcome(event, event.winningOutcome);
     const { error: winningError } = await remote.client
       .from("markets")
@@ -950,6 +1072,9 @@ function buildWinningSelectionPayload(event) {
   };
   if (event.status === "resolved" || event.bonusAwarded !== undefined) {
     payload.bonus_awarded = Boolean(event.bonusAwarded);
+  }
+  if (isTopThreeComboMarket(event)) {
+    payload.combo_result = getComboResult(event);
   }
   return payload;
 }
@@ -1142,7 +1267,15 @@ async function saveRemoteBet(event, bet) {
       throw new Error("Cannot place bet. Market has closed.");
     }
   }
-  const outcome = await ensureRemoteOutcome(event, bet.outcome);
+  const selectionLabels = isTopThreeComboMarket(event) ? getComboSelections(bet) : [];
+  const remoteSelections = [];
+  for (const label of selectionLabels) {
+    const remoteOutcome = await ensureRemoteOutcome(event, label);
+    remoteSelections.push(remoteOutcome.id);
+  }
+  const outcome = isTopThreeComboMarket(event)
+    ? await ensureRemoteOutcome(event, selectionLabels[0] || bet.outcome)
+    : await ensureRemoteOutcome(event, bet.outcome);
 
   const payload = {
     market_id: event.remoteId,
@@ -1150,7 +1283,7 @@ async function saveRemoteBet(event, bet) {
     outcome_id: outcome.id,
     client_id: bet.id,
     stake: Number(bet.value),
-    selections: [outcome.id],
+    selections: isTopThreeComboMarket(event) ? remoteSelections : [outcome.id],
     is_active: true,
   };
 
@@ -1703,7 +1836,7 @@ function renderPlayerMarketBets(event, playerBets, canBet) {
       <p class="muted">Your bets:</p>
       ${playerBets.map((bet) => `
         <div class="player-bet-chip ${bet.id === highlightedBetId ? "success-pulse" : ""}">
-          <span><strong>${money(bet.value)}</strong> on <strong>${escapeHtml(bet.outcome)}</strong></span>
+          <span><strong>${money(bet.value)}</strong> on <strong>${escapeHtml(getBetPickText(bet))}</strong></span>
           <button class="ghost mini-button" ${canBet ? "" : "disabled"} data-player-bet="${event.id}" data-bet-id="${bet.id}">Edit</button>
         </div>
       `).join("")}
@@ -1776,7 +1909,7 @@ function getLatestPlayerActivity(player) {
         type: "bet",
         at: latestBet.updatedAt || latestBet.createdAt || event.createdAt,
         text: bets.length === 1
-          ? `Bet ${money(latestBet.value)} on ${latestBet.outcome} in ${event.name}`
+          ? `Bet ${money(latestBet.value)} on ${getBetPickText(latestBet)} in ${event.name}`
           : `Bet ${money(total)} across ${bets.length} picks in ${event.name}`,
       });
     }
@@ -1833,7 +1966,7 @@ function getPlayerActivity(playerId) {
       <div class="activity-row">
         <div>
           <strong>${escapeHtml(event.name)}</strong>
-          <span class="muted">${bets.map((bet) => `${money(bet.value)} on ${escapeHtml(bet.outcome)}`).join(" · ")}</span>
+          <span class="muted">${bets.map((bet) => `${money(bet.value)} on ${escapeHtml(getBetPickText(bet))}`).join(" · ")}</span>
         </div>
         <span class="pill ${event.status}">${event.status === "resolved" ? `${net >= 0 ? "+" : ""}${money(net)}` : event.status}</span>
       </div>
@@ -1846,6 +1979,10 @@ function getPlayerActivity(playerId) {
 }
 
 function renderPayoutBreakdown(event, playerId, bets, payout) {
+  if (isTopThreeComboMarket(event)) {
+    return renderComboPayoutBreakdown(event, bets, payout);
+  }
+
   if (event.status !== "resolved" || payout <= 0 || !event.winningOutcome) return "";
 
   const winningStake = bets
@@ -1868,6 +2005,36 @@ function renderPayoutBreakdown(event, playerId, bets, payout) {
         <span>Your stake</span><strong>${money(winningStake)}</strong>
         <span>Winning outcome</span><strong>${escapeHtml(event.winningOutcome)}</strong>
         <span>Total winning stake</span><strong>${money(totalWinningStake)}</strong>
+        <span>Prize pool after tax</span><strong>${money(prizePool)}</strong>
+        <span>Your share</span><strong>${formatRatio(share * 100)}%</strong>
+        ${event.bonusAwarded ? `<span>Bonus included</span><strong>${money(Number(event.bonusPoints || 0) * share)}</strong>` : ""}
+        <span>Final payout</span><strong>${money(payout)}</strong>
+      </div>
+    </details>
+  `;
+}
+
+function renderComboPayoutBreakdown(event, bets, payout) {
+  if (event.status !== "resolved" || payout <= 0) return "";
+  const details = getComboBetDetails(event, bets);
+  if (details.playerWeightedStake <= 0 || details.totalWeightedStake <= 0) return "";
+
+  const totalStake = bets.reduce((total, bet) => total + Number(bet.value || 0), 0);
+  const prizePool = getEventPool(event) * (1 - TAX_RATE);
+  const share = details.playerWeightedStake / details.totalWeightedStake;
+  const bestMatch = details.rows.reduce((best, row) => row.matchCount > best.matchCount ? row : best, details.rows[0]);
+
+  return `
+    <details class="payout-breakdown">
+      <summary>Payout breakdown</summary>
+      <div class="payout-breakdown-grid">
+        <span>Your picks</span><strong>${escapeHtml(details.rows.map((row) => row.selections.join(", ")).join(" · "))}</strong>
+        <span>Result</span><strong>${escapeHtml(details.result.join(", "))}</strong>
+        <span>Correct picks</span><strong>${bestMatch?.matchCount || 0} of 3</strong>
+        <span>Match weight</span><strong>${formatRatio(bestMatch?.matchWeight || 0)}x best bet</strong>
+        <span>Your stake</span><strong>${money(totalStake)}</strong>
+        <span>Weighted stake</span><strong>${money(details.playerWeightedStake)}</strong>
+        <span>Total weighted stake</span><strong>${money(details.totalWeightedStake)}</strong>
         <span>Prize pool after tax</span><strong>${money(prizePool)}</strong>
         <span>Your share</span><strong>${formatRatio(share * 100)}%</strong>
         ${event.bonusAwarded ? `<span>Bonus included</span><strong>${money(Number(event.bonusPoints || 0) * share)}</strong>` : ""}
@@ -1960,7 +2127,7 @@ function renderEvent(event, index = 0) {
       <div class="event-body">
         ${marketSummary}
         ${oddsMenu}
-        ${event.status === "resolved" ? `<p class="muted">Winning outcome: <strong>${escapeHtml(event.winningOutcome)}</strong></p>` : ""}
+        ${event.status === "resolved" ? `<p class="muted">Winning outcome: <strong>${escapeHtml(getComboResultLabel(event))}</strong></p>` : ""}
         ${event.status === "resolved" ? `<button class="danger undo-button" data-undo-payout="${event.id}">Undo Last Payout</button>` : ""}
       </div>
     </article>
@@ -2006,7 +2173,7 @@ function renderCollapsedResult(event) {
 
   const payouts = getEventPayouts(event);
   if (payouts.length === 0) {
-    return `<p class="muted">No winner · Outcome: <strong>${escapeHtml(event.winningOutcome || "Not set")}</strong></p>`;
+    return `<p class="muted">No winner · Outcome: <strong>${escapeHtml(getComboResultLabel(event))}</strong></p>`;
   }
 
   return `
@@ -2018,7 +2185,7 @@ function renderCollapsedResult(event) {
             <span class="trophy" aria-label="Winner">🏆</span>
             <strong>${escapeHtml(player?.name || "Unknown player")}</strong>
             won <strong>${money(payout.amount)}</strong>
-            <span>· Outcome: <strong>${escapeHtml(event.winningOutcome || "Not set")}</strong></span>
+            <span>· Outcome: <strong>${escapeHtml(getComboResultLabel(event))}</strong></span>
           </p>
         `;
       }).join("")}
@@ -2030,7 +2197,7 @@ function renderBetRow(event, player) {
   const bets = event.bets.filter((item) => item.playerId === player.id);
   const highlightClass = bets.some((bet) => bet.id === highlightedBetId) ? "success-pulse" : "";
   const detail = bets.length
-    ? bets.map((bet) => `${money(bet.value)} on ${escapeHtml(bet.outcome)}`).join(" · ")
+    ? bets.map((bet) => `${money(bet.value)} on ${escapeHtml(getBetPickText(bet))}`).join(" · ")
     : "No bet yet";
   const canEdit = event.status === "open";
 
@@ -2092,6 +2259,24 @@ function renderOutcomePicker(event) {
       </label>
     `
     : "";
+
+  if (isTopThreeComboMarket(event)) {
+    const options = outcomes.map((outcome) => `<option value="${escapeAttr(outcome)}">${escapeHtml(outcome)}</option>`).join("");
+    return `
+      <div class="combo-resolve">
+        <p class="muted">Call the final Top 3. Order does not matter.</p>
+        ${[1, 2, 3].map((pick) => `
+          <select data-combo-outcome-select="${event.id}" aria-label="Top 3 pick ${pick}">
+            <option value="">Top 3 pick ${pick}...</option>
+            ${options}
+          </select>
+        `).join("")}
+      </div>
+      ${bonusControl}
+      <button data-resolve-event="${event.id}">Confirm Payout</button>
+      <button class="ghost" data-void-event="${event.id}">Void / Refund</button>
+    `;
+  }
 
   return `
     <select data-outcome-select="${event.id}" aria-label="Winning outcome">
@@ -2219,7 +2404,7 @@ async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType =
     id: uid(),
     name,
     status: "open",
-    marketType: "single",
+    marketType: profileMarketType === "TopThreeCombo" ? "combo" : "single",
     profileMarketType,
     payoutMode: "pool",
     payoutMultiplier: 1,
@@ -2327,6 +2512,10 @@ async function closeAllBetting() {
 async function resolveEvent(eventId) {
   if (!requireHostMode()) return;
   const event = state.events.find((item) => item.id === eventId);
+  if (isTopThreeComboMarket(event)) {
+    await resolveComboEvent(event);
+    return;
+  }
   const select = document.querySelector(`[data-outcome-select="${eventId}"]`);
   const customOutcome = document.querySelector(`[data-custom-outcome="${eventId}"]`)?.value.trim();
   const bonusAwarded = Boolean(document.querySelector(`[data-bonus-awarded="${eventId}"]`)?.checked);
@@ -2378,6 +2567,63 @@ async function resolveEvent(eventId) {
   });
 }
 
+async function resolveComboEvent(event) {
+  if (!event || event.status !== "locked") return;
+  const bonusAwarded = Boolean(document.querySelector(`[data-bonus-awarded="${event.id}"]`)?.checked);
+  const selections = Array.from(document.querySelectorAll(`[data-combo-outcome-select="${event.id}"]`))
+    .map((select) => normalizeOutcomeLabel(select.value))
+    .filter(Boolean);
+  const uniqueSelections = [...new Set(selections.map((item) => item.toLowerCase()))];
+  if (selections.length !== 3 || uniqueSelections.length !== 3) {
+    await askConfirm({
+      title: "Choose final Top 3",
+      message: "Pick exactly three different players before confirming this combo market.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  const resultLabel = selections.join(", ");
+  const confirmed = await askConfirm({
+    title: "Confirm combo payout",
+    message: `Resolve "${event.name}" with Top 3: ${resultLabel}? Bets are paid by correct picks: 3 = 5x weight, 2 = 2x, 1 = 0.5x, 0 = no payout.${bonusAwarded ? ` Bonus included: ${money(event.bonusPoints)} points.` : ""}`,
+    action: "Apply payouts",
+  });
+  if (!confirmed) return;
+
+  if (!event.stakesLocked) {
+    event.bets.forEach((bet) => {
+      const player = state.players.find((item) => item.id === bet.playerId);
+      if (player) player.points -= bet.value;
+    });
+    event.stakesLocked = true;
+    event.lockedAt = event.lockedAt || new Date().toISOString();
+  }
+
+  event.winningSelections = selections;
+  event.winningOutcome = resultLabel;
+  event.bonusAwarded = bonusAwarded;
+  const payouts = calculateComboEventPayouts(event, bonusAwarded);
+
+  payouts.forEach((payout) => {
+    const player = state.players.find((item) => item.id === payout.playerId);
+    if (player) player.points += payout.amount;
+  });
+
+  event.status = "resolved";
+  event.payouts = payouts;
+  event.resolvedAt = new Date().toISOString();
+  collapsedEvents.add(event.id);
+  saveCollapsedEvents();
+  render();
+  await runRemote(async () => {
+    await Promise.all(state.players.map((player) => saveRemotePlayer(player)));
+    await saveRemoteMarket(event);
+    await saveRemotePayouts(event);
+  });
+}
+
 async function undoPayout(eventId) {
   const event = state.events.find((item) => item.id === eventId);
   if (!event || event.status !== "resolved") return;
@@ -2396,6 +2642,7 @@ async function undoPayout(eventId) {
 
   event.status = "locked";
   event.winningOutcome = null;
+  event.winningSelections = [];
   event.payouts = [];
   event.resolvedAt = null;
   collapsedEvents.delete(event.id);
@@ -2521,6 +2768,10 @@ function openBetDialog(eventId, playerId, betId = null) {
   const event = state.events.find((item) => item.id === eventId);
   const player = state.players.find((item) => item.id === playerId);
   if (!event || !player || event.status !== "open") return;
+  if (isTopThreeComboMarket(event)) {
+    openComboBetDialog(event, player, betId);
+    return;
+  }
 
   const existingBet = betId ? event.bets.find((item) => item.id === betId && item.playerId === playerId) : null;
   const excludedBet = existingBet ? { betId: existingBet.id } : null;
@@ -2608,6 +2859,119 @@ function openBetDialog(eventId, playerId, betId = null) {
   document.body.appendChild(dialog);
   dialog.showModal();
   outcomeChoice.focus();
+}
+
+function openComboBetDialog(event, player, betId = null) {
+  const existingBet = betId ? event.bets.find((item) => item.id === betId && item.playerId === player.id) : null;
+  const excludedBet = existingBet ? { betId: existingBet.id } : null;
+  const available = getAvailablePoints(player.id, excludedBet);
+  const fragment = els.betDialogTemplate.content.cloneNode(true);
+  const dialog = fragment.querySelector("dialog");
+  const valueInput = fragment.querySelector("[data-bet-value]");
+  const outcomeChoice = fragment.querySelector("[data-outcome-choice]");
+  const outcomeLabel = outcomeChoice.closest("label");
+  const removeButton = fragment.querySelector("[data-remove-bet]");
+  const outcomes = getEventOutcomes(event);
+  const existingSelections = getComboSelections(existingBet);
+  const blockedCombos = new Set(
+    event.bets
+      .filter((item) => item.playerId === player.id && item.id !== existingBet?.id)
+      .map((item) => getComboKey(getComboSelections(item)))
+      .filter(Boolean)
+  );
+
+  if (outcomes.length < 3) {
+    askConfirm({
+      title: "Not enough outcomes",
+      message: "Top Three Combo markets need at least three outcomes before taking bets.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  fragment.querySelector("[data-player-name]").textContent = player.name;
+  fragment.querySelector("[data-market-name]").textContent = `${event.name} · Pick exactly 3 different names`;
+  fragment.querySelector("[data-available]").textContent = `${money(available)} points available for this bet.`;
+  valueInput.max = available;
+  valueInput.value = existingBet?.value || "";
+  removeButton.disabled = !existingBet;
+  outcomeLabel.innerHTML = `
+    Top Three picks
+    <div class="combo-pick-grid">
+      ${[0, 1, 2].map((index) => `
+        <select data-combo-bet-choice aria-label="Top Three pick ${index + 1}">
+          <option value="">Pick ${index + 1}...</option>
+          ${outcomes.map((outcome) => `<option value="${escapeAttr(outcome)}">${escapeHtml(outcome)}</option>`).join("")}
+        </select>
+      `).join("")}
+    </div>
+    <p class="muted" data-combo-summary>Your three will appear here.</p>
+  `;
+
+  const comboChoices = Array.from(fragment.querySelectorAll("[data-combo-bet-choice]"));
+  const summary = fragment.querySelector("[data-combo-summary]");
+  comboChoices.forEach((select, index) => {
+    select.value = existingSelections[index] || "";
+  });
+
+  const updateSummary = () => {
+    const selections = comboChoices.map((select) => normalizeOutcomeLabel(select.value)).filter(Boolean);
+    summary.textContent = selections.length
+      ? `Your three: ${selections.join(", ")}`
+      : "Your three will appear here.";
+  };
+  comboChoices.forEach((select) => select.addEventListener("change", updateSummary));
+  updateSummary();
+
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    const target = event.target;
+    if (!target.matches("input, select")) return;
+    event.preventDefault();
+    dialog.close("confirm");
+  });
+
+  dialog.addEventListener("close", () => {
+    if (dialog.returnValue === "confirm") {
+      const value = Math.floor(Number(valueInput.value));
+      const selections = comboChoices.map((select) => normalizeOutcomeLabel(select.value)).filter(Boolean);
+      const uniqueSelections = [...new Set(selections.map((item) => item.toLowerCase()))];
+      const comboKey = getComboKey(selections);
+      if (value > 0 && value <= available && selections.length === 3 && uniqueSelections.length === 3 && !blockedCombos.has(comboKey)) {
+        const nextBet = { ...(existingBet || {}), playerId: player.id, value, outcome: selections.join(", "), selections };
+        placeBet(event, nextBet);
+      } else if (blockedCombos.has(comboKey)) {
+        askConfirm({
+          title: "Already picked",
+          message: "This player already has a bet on that exact Top Three combo. Edit the existing bet instead.",
+          action: "OK",
+          notice: true,
+        });
+      } else if (selections.length !== 3 || uniqueSelections.length !== 3) {
+        askConfirm({
+          title: "Choose three players",
+          message: "Pick exactly three different names for a Top Three Combo bet.",
+          action: "OK",
+          notice: true,
+        });
+      }
+    }
+
+    if (dialog.returnValue === "remove") {
+      if (existingBet) {
+        event.bets = event.bets.filter((item) => item.id !== existingBet.id);
+      }
+      render();
+      runRemote(() => deleteRemoteBet(event, player.id, existingBet?.id || null));
+    }
+
+    dialog.remove();
+  });
+
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  comboChoices[0]?.focus();
 }
 
 async function removePlayer(playerId) {
@@ -2717,10 +3081,11 @@ els.eventForm.addEventListener("submit", async (event) => {
   const name = els.eventName.value.trim();
   if (!name) return;
   const outcomeItems = getOutcomeFieldItems();
-  if (outcomeItems.length < 2) {
+  const requiredOutcomes = els.marketType.value === "TopThreeCombo" ? 3 : 2;
+  if (outcomeItems.length < requiredOutcomes) {
     await askConfirm({
       title: "Add outcomes",
-      message: "Create at least two outcomes before publishing a market.",
+      message: `Create at least ${requiredOutcomes} outcomes before publishing this market.`,
       action: "OK",
       notice: true,
     });

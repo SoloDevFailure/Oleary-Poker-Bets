@@ -498,6 +498,17 @@ h3 {
   padding: 0.7rem;
 }
 
+.combo-resolve,
+.combo-pick-grid {
+  display: grid;
+  gap: 0.55rem;
+  width: 100%;
+}
+
+.combo-pick-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
 .checkbox-row {
   display: inline-flex;
   align-items: center;
