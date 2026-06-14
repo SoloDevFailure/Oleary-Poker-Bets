@@ -1,4 +1,4 @@
-const CACHE_NAME = "oleary-ave-poker-bets-v51";
+const CACHE_NAME = "oleary-ave-poker-bets-v52";
 const ASSETS = [
   "./",
   "./index.html",
