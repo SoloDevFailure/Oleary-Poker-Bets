@@ -41,6 +41,12 @@ const aiDisclaimerKey = "oleary-ai-ratings-disclaimer-seen";
 const seenWinPayoutsKey = `oleary-seen-win-payouts-${deviceKey}`;
 const seenWinPayouts = new Set(JSON.parse(localStorage.getItem(seenWinPayoutsKey) || "[]"));
 let winPopupsPrimed = localStorage.getItem(`${seenWinPayoutsKey}-primed`) === "yes";
+const PLAYER_TAB_ORDER = ["profile", "markets", "social"];
+let playerTabDirection = "forward";
+let highlightedBetId = null;
+let highlightedEventId = null;
+let highlightTimer = null;
+const animatedMarketCards = new Set();
 const remote = {
   client: null,
   session: null,
@@ -1288,7 +1294,10 @@ async function placeBet(event, nextBet) {
   }
   render();
 
-  if (!remoteReady()) return;
+  if (!remoteReady()) {
+    markBetSuccess(event.id, bet.id);
+    return;
+  }
 
   const saved = await runRemote(() => saveRemoteBet(event, bet));
   if (!saved) {
@@ -1300,7 +1309,22 @@ async function placeBet(event, nextBet) {
       action: "OK",
       notice: true,
     });
+  } else {
+    markBetSuccess(event.id, bet.id);
   }
+}
+
+function markBetSuccess(eventId, betId) {
+  highlightedEventId = eventId;
+  highlightedBetId = betId;
+  if (highlightTimer) clearTimeout(highlightTimer);
+  render();
+  highlightTimer = setTimeout(() => {
+    highlightedEventId = null;
+    highlightedBetId = null;
+    highlightTimer = null;
+    render();
+  }, 900);
 }
 
 function render() {
@@ -1364,6 +1388,7 @@ function renderPlayerTabs() {
   const showProfile = activePlayerTab === "profile";
   const showMarkets = activePlayerTab === "markets";
   const showSocial = activePlayerTab === "social";
+  document.body.dataset.playerTabDirection = playerTabDirection;
   els.playerProfileTab.classList.toggle("active", showProfile);
   els.playerMarketsTab.classList.toggle("active", showMarkets);
   els.playerSocialTab.classList.toggle("active", showSocial);
@@ -1530,17 +1555,19 @@ function renderPlayerMarkets(player) {
     return;
   }
 
-  els.playerMarketsList.innerHTML = sortMarketsForDisplay(markets).map((event) => renderPlayerMarket(event, player)).join("");
+  els.playerMarketsList.innerHTML = sortMarketsForDisplay(markets).map((event, index) => renderPlayerMarket(event, player, index)).join("");
 }
 
-function renderPlayerMarket(event, player) {
+function renderPlayerMarket(event, player, index = 0) {
   const pool = getEventPool(event);
   const playerBets = event.bets.filter((item) => item.playerId === player.id);
   const canBet = event.status === "open";
   const summary = getMarketSummary(event);
+  const animationAttrs = getMarketAnimationAttrs(event, index, "player");
+  const highlightClass = event.id === highlightedEventId ? "success-pulse" : "";
 
   return `
-    <article class="event-card">
+    <article class="event-card ${highlightClass}" ${animationAttrs}>
       <div class="event-top">
         <div>
           <div class="event-meta">
@@ -1575,7 +1602,7 @@ function renderPlayerMarketBets(event, playerBets, canBet) {
     <div class="player-bet-list">
       <p class="muted">Your bets:</p>
       ${playerBets.map((bet) => `
-        <div class="player-bet-chip">
+        <div class="player-bet-chip ${bet.id === highlightedBetId ? "success-pulse" : ""}">
           <span><strong>${money(bet.value)}</strong> on <strong>${escapeHtml(bet.outcome)}</strong></span>
           <button class="ghost mini-button" ${canBet ? "" : "disabled"} data-player-bet="${event.id}" data-bet-id="${bet.id}">Edit</button>
         </div>
@@ -1756,7 +1783,7 @@ function renderEvents() {
     return;
   }
 
-  els.eventsList.innerHTML = sortMarketsForDisplay(state.events).map((event) => renderEvent(event)).join("");
+  els.eventsList.innerHTML = sortMarketsForDisplay(state.events).map((event, index) => renderEvent(event, index)).join("");
 }
 
 function sortMarketsForDisplay(markets) {
@@ -1768,7 +1795,14 @@ function sortMarketsForDisplay(markets) {
   });
 }
 
-function renderEvent(event) {
+function getMarketAnimationAttrs(event, index = 0, context = "host") {
+  const key = `${context}:${event.remoteId || event.id}`;
+  if (animatedMarketCards.has(key)) return "";
+  animatedMarketCards.add(key);
+  return `data-animate-card style="--card-stagger: ${Math.min(index, 6) * 28}ms"`;
+}
+
+function renderEvent(event, index = 0) {
   const pool = getEventPool(event);
   const statusText = event.status.charAt(0).toUpperCase() + event.status.slice(1);
   const canCollapse = event.status === "resolved" || event.status === "voided";
@@ -1777,10 +1811,12 @@ function renderEvent(event) {
   const quickSummary = getMarketSummary(event);
   const oddsMenu = renderMarketOddsMenu(event);
   const outcomePicker = renderOutcomePicker(event);
+  const animationAttrs = getMarketAnimationAttrs(event, index, "host");
+  const highlightClass = event.id === highlightedEventId ? "success-pulse" : "";
 
   if (isCollapsed) {
     return `
-      <article class="event-card event-card-slim">
+      <article class="event-card event-card-slim ${highlightClass}" ${animationAttrs}>
         <div class="event-top slim">
           <div>
             <div class="event-meta">
@@ -1796,7 +1832,7 @@ function renderEvent(event) {
   }
 
   return `
-    <article class="event-card market-card">
+    <article class="event-card market-card ${highlightClass}" ${animationAttrs}>
       <button class="danger x-button market-remove" data-remove-event="${event.id}" aria-label="Remove market">x</button>
       <div class="event-top">
         <div>
@@ -1892,13 +1928,14 @@ function renderCollapsedResult(event) {
 
 function renderBetRow(event, player) {
   const bets = event.bets.filter((item) => item.playerId === player.id);
+  const highlightClass = bets.some((bet) => bet.id === highlightedBetId) ? "success-pulse" : "";
   const detail = bets.length
     ? bets.map((bet) => `${money(bet.value)} on ${escapeHtml(bet.outcome)}`).join(" · ")
     : "No bet yet";
   const canEdit = event.status === "open";
 
   return `
-    <div class="bet-row">
+    <div class="bet-row ${highlightClass}">
       <div>
         <span class="bet-name">${escapeHtml(player.name)}</span>
         <span class="muted">${detail}</span>
@@ -2757,7 +2794,22 @@ els.playerJoinForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = els.playerJoinName.value.trim();
   if (!name) return;
-  await joinCurrentSession(name);
+  const submitButton = els.playerJoinForm.querySelector('button[type="submit"]');
+  const originalText = submitButton?.textContent || "Join";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Joining...";
+    submitButton.classList.add("is-loading");
+  }
+  try {
+    await joinCurrentSession(name);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalText;
+      submitButton.classList.remove("is-loading");
+    }
+  }
 });
 
 async function refreshMarketButtonState(button) {
@@ -2969,7 +3021,11 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 
 document.querySelectorAll("[data-player-tab]").forEach((button) => {
   button.addEventListener("click", async () => {
-    activePlayerTab = button.dataset.playerTab;
+    const nextTab = button.dataset.playerTab;
+    const currentIndex = PLAYER_TAB_ORDER.indexOf(activePlayerTab);
+    const nextIndex = PLAYER_TAB_ORDER.indexOf(nextTab);
+    playerTabDirection = nextIndex >= currentIndex ? "forward" : "back";
+    activePlayerTab = nextTab;
     localStorage.setItem("poker-night-bets-player-tab", activePlayerTab);
     renderPlayerTabs();
     if (remoteReady()) await refreshSharedState();

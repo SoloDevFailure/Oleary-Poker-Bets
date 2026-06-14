@@ -37,10 +37,25 @@ button {
   cursor: pointer;
   font-weight: 700;
   padding: 0.75rem 1rem;
+  transition: background-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button:hover {
   background: var(--accent-dark);
+}
+
+button:active:not(:disabled),
+.file-button:active {
+  transform: scale(0.97);
+}
+
+button:focus-visible,
+.file-button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid rgba(22, 107, 77, 0.28);
+  outline-offset: 2px;
 }
 
 button.bonus {
@@ -63,6 +78,10 @@ button.penalty {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+button.is-loading {
+  box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.08);
 }
 
 input {
@@ -273,8 +292,40 @@ h3 {
   display: block;
 }
 
+.player-mode .player-tab-panel.active {
+  animation: player-tab-in-forward 210ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.player-mode[data-player-tab-direction="back"] .player-tab-panel.active {
+  animation-name: player-tab-in-back;
+}
+
 .player-mode .toolbar {
   margin-left: auto;
+}
+
+#playerJoinPanel {
+  display: grid;
+  gap: 1rem;
+}
+
+.welcome-logo {
+  display: block;
+  width: min(100%, 520px);
+  margin: 0 auto;
+  border-radius: 8px;
+  animation: welcome-logo-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+#playerJoinPanel .section-header {
+  margin-bottom: 0;
+  text-align: center;
+  animation: welcome-panel-in 230ms cubic-bezier(0.2, 0.8, 0.2, 1) 90ms both;
+}
+
+#playerJoinPanel .inline-form {
+  margin-bottom: 0;
+  animation: welcome-panel-in 230ms cubic-bezier(0.2, 0.8, 0.2, 1) 140ms both;
 }
 
 .social-feed {
@@ -682,6 +733,17 @@ h3 {
   overflow: hidden;
 }
 
+.event-card[data-animate-card] {
+  animation: card-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: var(--card-stagger, 0ms);
+}
+
+.event-card.success-pulse,
+.bet-row.success-pulse,
+.player-bet-chip.success-pulse {
+  animation: success-pulse 850ms ease-out both;
+}
+
 .market-card {
   position: relative;
 }
@@ -967,6 +1029,90 @@ select {
   border-radius: 7px;
   background: white;
   padding: 0.65rem;
+}
+
+@keyframes player-tab-in-forward {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes player-tab-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes success-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(22, 107, 77, 0);
+  }
+  22% {
+    background-color: #e0f2ea;
+    box-shadow: 0 0 0 4px rgba(22, 107, 77, 0.14);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(22, 107, 77, 0);
+  }
+}
+
+@keyframes welcome-logo-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes welcome-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  button:active:not(:disabled),
+  .file-button:active {
+    transform: none;
+  }
 }
 
 @media (max-width: 860px) {

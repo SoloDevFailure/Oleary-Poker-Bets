@@ -1,4 +1,4 @@
-const CACHE_NAME = "oleary-ave-poker-bets-v44";
+const CACHE_NAME = "oleary-ave-poker-bets-v46";
 const ASSETS = [
   "./",
   "./index.html",
@@ -6,7 +6,8 @@ const ASSETS = [
   "./app.js",
   "./supabase-config.js",
   "./manifest.webmanifest",
-  "./icon.svg"
+  "./icon.svg",
+  "./PokerBets.png"
 ];
 
 self.addEventListener("install", (event) => {
