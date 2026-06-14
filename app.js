@@ -1519,6 +1519,15 @@ async function runRemote(task) {
 
 async function placeBet(event, nextBet) {
   const previousBets = [...event.bets];
+  if (isTopThreeComboMarket(event) && !nextBet.id && event.bets.some((bet) => bet.playerId === nextBet.playerId)) {
+    await askConfirm({
+      title: "One combo bet only",
+      message: "Top Three Combo markets allow one bet per player. Edit your existing combo bet instead.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
   const bet = { ...nextBet, id: nextBet.id || uid(), createdAt: nextBet.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
   const existingIndex = event.bets.findIndex((item) => item.id === bet.id);
   if (existingIndex >= 0) {
@@ -1798,6 +1807,7 @@ function renderPlayerMarket(event, player, index = 0) {
   const summary = getMarketSummary(event);
   const animationAttrs = getMarketAnimationAttrs(event, index, "player");
   const highlightClass = event.id === highlightedEventId ? "success-pulse" : "";
+  const isCombo = isTopThreeComboMarket(event);
 
   return `
     <article class="event-card ${highlightClass}" ${animationAttrs}>
@@ -1806,19 +1816,21 @@ function renderPlayerMarket(event, player, index = 0) {
           <div class="event-meta">
             <h3>${escapeHtml(event.name)}</h3>
             <span class="pill ${event.status}">${event.status}</span>
+            ${isCombo ? '<span class="pill">Top Three Combo</span>' : ""}
             ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus available</span>' : ""}
           </div>
           <p class="muted">Pool: ${money(pool)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
+          ${isCombo ? '<p class="muted">Pick exactly 3 different names. Order does not matter. One combo bet per player.</p>' : ""}
           <div class="market-quick-info">
             <span><strong>${summary.totalBets}</strong> bet${summary.totalBets === 1 ? "" : "s"} placed</span>
             <span>Favorite: <strong>${escapeHtml(summary.favorite)}</strong></span>
           </div>
           ${renderMarketMovement(summary.movements)}
-          ${renderPlayerMarketBets(event, playerBets, canBet)}
+          ${isCombo ? renderPlayerComboBetPanel(event, player, playerBets[0] || null, canBet) : renderPlayerMarketBets(event, playerBets, canBet)}
         </div>
         <div class="event-actions">
           <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
-          <button ${canBet ? "" : "disabled"} data-player-bet="${event.id}">Add Bet</button>
+          ${isCombo ? "" : `<button ${canBet ? "" : "disabled"} data-player-bet="${event.id}">Add Bet</button>`}
         </div>
       </div>
       <div class="event-body">
@@ -1827,6 +1839,106 @@ function renderPlayerMarket(event, player, index = 0) {
       </div>
     </article>
   `;
+}
+
+function renderPlayerComboBetPanel(event, player, existingBet, canBet) {
+  const outcomes = getEventOutcomes(event);
+  const selections = getComboSelections(existingBet);
+  const available = getAvailablePoints(player.id, existingBet ? { betId: existingBet.id } : null);
+  const maxValue = existingBet ? available : getAvailablePoints(player.id);
+
+  if (existingBet) {
+    return `
+      <div class="combo-summary-row ${existingBet.id === highlightedBetId ? "success-pulse" : ""}">
+        <span>Your three: <strong>${escapeHtml(getBetPickText(existingBet))}</strong></span>
+        <span><strong>${money(existingBet.value)}</strong> points</span>
+      </div>
+      ${canBet ? renderPlayerComboControls(event, outcomes, selections, existingBet.value, maxValue, existingBet.id) : ""}
+    `;
+  }
+
+  if (!canBet) return '<p class="muted">You have not bet on this market.</p>';
+  return renderPlayerComboControls(event, outcomes, selections, "", maxValue, "");
+}
+
+function renderPlayerComboControls(event, outcomes, selections, value, maxValue, betId) {
+  return `
+    <div class="combo-inline-card">
+      <div class="combo-pick-grid">
+        ${[0, 1, 2].map((index) => `
+          <label>
+            <span>${index + 1}${index === 0 ? "st" : index === 1 ? "nd" : "rd"} pick</span>
+            <select data-combo-inline-pick="${event.id}" data-pick-index="${index}">
+              <option value="">Choose...</option>
+              ${outcomes.map((outcome) => `<option value="${escapeAttr(outcome)}" ${selections[index] === outcome ? "selected" : ""}>${escapeHtml(outcome)}</option>`).join("")}
+            </select>
+          </label>
+        `).join("")}
+      </div>
+      <label>
+        <span>Bet value</span>
+        <input data-combo-inline-value="${event.id}" type="number" min="1" max="${Number(maxValue || 0)}" step="1" value="${escapeAttr(value || "")}" placeholder="Points" />
+      </label>
+      <button data-place-combo-bet="${event.id}" data-bet-id="${escapeAttr(betId || "")}">${betId ? "Update Top Three" : "Place Top Three Bet"}</button>
+      <p class="muted">Available for this bet: ${money(maxValue)}</p>
+    </div>
+  `;
+}
+
+async function placeInlineComboBet(eventId, betId = "") {
+  const player = getCurrentPlayer();
+  const event = state.events.find((item) => item.id === eventId);
+  if (!player || !event || !isTopThreeComboMarket(event) || event.status !== "open") return;
+
+  const existingBet = betId
+    ? event.bets.find((bet) => bet.id === betId && bet.playerId === player.id)
+    : event.bets.find((bet) => bet.playerId === player.id);
+  if (!betId && existingBet) {
+    await askConfirm({
+      title: "One combo bet only",
+      message: "You already have a Top Three Combo bet on this market. Update that bet instead.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  const selections = Array.from(document.querySelectorAll(`[data-combo-inline-pick="${eventId}"]`))
+    .sort((a, b) => Number(a.dataset.pickIndex) - Number(b.dataset.pickIndex))
+    .map((select) => normalizeOutcomeLabel(select.value))
+    .filter(Boolean);
+  const uniqueSelections = [...new Set(selections.map((item) => item.toLowerCase()))];
+  const valueInput = document.querySelector(`[data-combo-inline-value="${eventId}"]`);
+  const value = Math.floor(Number(valueInput?.value));
+  const available = getAvailablePoints(player.id, existingBet ? { betId: existingBet.id } : null);
+
+  if (selections.length !== 3 || uniqueSelections.length !== 3) {
+    await askConfirm({
+      title: "Choose three players",
+      message: "Pick exactly three different names for a Top Three Combo bet.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  if (!value || value <= 0 || value > available) {
+    await askConfirm({
+      title: "Check bet value",
+      message: `Enter a bet value from 1 to ${money(available)} points.`,
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  await placeBet(event, {
+    ...(existingBet || {}),
+    playerId: player.id,
+    value,
+    outcome: selections.join(", "),
+    selections,
+  });
 }
 
 function renderPlayerMarketBets(event, playerBets, canBet) {
@@ -2863,6 +2975,15 @@ function openBetDialog(eventId, playerId, betId = null) {
 
 function openComboBetDialog(event, player, betId = null) {
   const existingBet = betId ? event.bets.find((item) => item.id === betId && item.playerId === player.id) : null;
+  if (!existingBet && event.bets.some((item) => item.playerId === player.id)) {
+    askConfirm({
+      title: "One combo bet only",
+      message: "Top Three Combo markets allow one bet per player. Edit your existing combo bet instead.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
   const excludedBet = existingBet ? { betId: existingBet.id } : null;
   const available = getAvailablePoints(player.id, excludedBet);
   const fragment = els.betDialogTemplate.content.cloneNode(true);
@@ -3146,6 +3267,7 @@ document.addEventListener("click", (event) => {
   const removeProfileButton = event.target.closest("[data-remove-profile]");
   const refreshMarketButton = event.target.closest("[data-refresh-market]");
   const playerBetButton = event.target.closest("[data-player-bet]");
+  const placeComboBetButton = event.target.closest("[data-place-combo-bet]");
 
   if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId, openBet.dataset.betId || null);
   if (closeButton) closeEvent(closeButton.dataset.closeEvent);
@@ -3163,6 +3285,7 @@ document.addEventListener("click", (event) => {
     const player = getCurrentPlayer();
     if (player) openPlayerBetDialog(playerBetButton.dataset.playerBet, player.id, playerBetButton.dataset.betId || null);
   }
+  if (placeComboBetButton) placeInlineComboBet(placeComboBetButton.dataset.placeComboBet, placeComboBetButton.dataset.betId || "");
   if (removeOutcomeButton) {
     if (!requireHostMode()) return;
     const outcomes = getOutcomeFieldDraftItems();
