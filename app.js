@@ -1528,6 +1528,15 @@ async function placeBet(event, nextBet) {
     });
     return;
   }
+  if (!isTopThreeComboMarket(event) && !nextBet.id && event.bets.some((bet) => bet.playerId === nextBet.playerId)) {
+    await askConfirm({
+      title: "One bet per market",
+      message: "You already have a bet on this market. Edit your existing bet instead.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
   const bet = { ...nextBet, id: nextBet.id || uid(), createdAt: nextBet.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
   const existingIndex = event.bets.findIndex((item) => item.id === bet.id);
   if (existingIndex >= 0) {
@@ -1830,7 +1839,7 @@ function renderPlayerMarket(event, player, index = 0) {
         </div>
         <div class="event-actions">
           <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
-          <button ${canBet && (!isCombo || playerBets.length === 0) ? "" : "disabled"} data-player-bet="${event.id}">Add Bet</button>
+          <button ${canBet && playerBets.length === 0 ? "" : "disabled"} data-player-bet="${event.id}">Add Bet</button>
         </div>
       </div>
       <div class="event-body">
@@ -2223,7 +2232,7 @@ function renderBetRow(event, player) {
         ${bets.map((bet, index) => `
           <button class="ghost mini-button" ${canEdit ? "" : "disabled"} data-open-bet="${event.id}" data-player-id="${player.id}" data-bet-id="${bet.id}">Edit ${index + 1}</button>
         `).join("")}
-        <button ${canEdit ? "" : "disabled"} data-open-bet="${event.id}" data-player-id="${player.id}">Add Bet</button>
+        <button ${canEdit && bets.length === 0 ? "" : "disabled"} data-open-bet="${event.id}" data-player-id="${player.id}">Add Bet</button>
       </div>
     </div>
   `;
@@ -2786,6 +2795,15 @@ function openBetDialog(eventId, playerId, betId = null) {
   }
 
   const existingBet = betId ? event.bets.find((item) => item.id === betId && item.playerId === playerId) : null;
+  if (!existingBet && event.bets.some((item) => item.playerId === playerId)) {
+    askConfirm({
+      title: "One bet per market",
+      message: "This player already has a bet on this market. Edit the existing bet instead.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
   const excludedBet = existingBet ? { betId: existingBet.id } : null;
   const available = getAvailablePoints(playerId, excludedBet);
   const fragment = els.betDialogTemplate.content.cloneNode(true);
