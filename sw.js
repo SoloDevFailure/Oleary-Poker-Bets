@@ -1,9 +1,11 @@
-const CACHE_NAME = "oleary-ave-poker-bets-v57";
+const CACHE_NAME = "oleary-ave-poker-bets-v58";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./js/constants.js",
+  "./js/utils.js",
+  "./js/combo-logic.js",
   "./app.js",
   "./supabase-config.js",
   "./manifest.webmanifest",

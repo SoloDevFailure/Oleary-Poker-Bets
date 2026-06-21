@@ -151,10 +151,6 @@ const els = {
   winBalance: document.querySelector("[data-win-balance]"),
 };
 
-function uid() {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-}
-
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) {
@@ -219,12 +215,6 @@ function normalizeOutcome(outcome) {
     seedLiquidity: Number(outcome.seedLiquidity || 0),
     profileId: outcome.profileId || null,
   };
-}
-
-function clampNumber(value, min, max) {
-  const number = Math.round(Number(value));
-  if (!Number.isFinite(number)) return min;
-  return Math.min(max, Math.max(min, number));
 }
 
 function saveState() {
@@ -325,10 +315,6 @@ async function initSupabaseConnection() {
     setSyncStatus(`Supabase error: ${shortError(error)}`, "offline");
     console.error("Supabase connection failed", error);
   }
-}
-
-function shortError(error) {
-  return String(error?.message || error || "unknown error").slice(0, 90);
 }
 
 function askConfirm({ title, message, action = "Confirm", danger = false, notice = false }) {
@@ -519,10 +505,6 @@ async function showPlayerQrCode() {
   els.qrDialog.showModal();
 }
 
-function money(value) {
-  return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
 function sortPlayers(players = state.players) {
   return [...players].sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
 }
@@ -696,82 +678,6 @@ function calculateEventPayouts(event, bonusAwarded = false) {
     }, {});
 
   return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
-}
-
-function isTopThreeComboMarket(event) {
-  return event?.profileMarketType === "TopThreeCombo" || event?.profileMarketType === "BottomThreeCombo";
-}
-
-function getComboMarketName(event) {
-  return event?.profileMarketType === "BottomThreeCombo" ? "Bottom Three Combo" : "Top Three Combo";
-}
-
-function getComboResultDescription(event) {
-  return event?.profileMarketType === "BottomThreeCombo" ? "first three eliminated" : "final Top 3";
-}
-
-function getComboSelections(bet) {
-  return Array.isArray(bet?.selections)
-    ? bet.selections.map(normalizeOutcomeLabel).filter(Boolean).slice(0, 3)
-    : [];
-}
-
-function getComboKey(selections) {
-  return [...new Set((selections || []).map(normalizeOutcomeLabel).filter(Boolean))]
-    .map((item) => item.toLowerCase())
-    .sort()
-    .join("|");
-}
-
-function getComboMatchCount(selections, result) {
-  const resultSet = new Set((result || []).map((item) => normalizeOutcomeLabel(item).toLowerCase()));
-  return getComboSelections({ selections })
-    .filter((item) => resultSet.has(item.toLowerCase()))
-    .length;
-}
-
-function getComboMatchWeight(matchCount) {
-  if (matchCount >= 3) return 5;
-  if (matchCount === 2) return 2;
-  if (matchCount === 1) return 0.5;
-  return 0;
-}
-
-function getComboResult(event) {
-  return Array.isArray(event?.winningSelections) ? event.winningSelections.map(normalizeOutcomeLabel).filter(Boolean).slice(0, 3) : [];
-}
-
-function getComboResultLabel(event) {
-  const result = getComboResult(event);
-  return result.length ? result.join(", ") : event?.winningOutcome || "Not set";
-}
-
-function getBetPickText(bet) {
-  const selections = getComboSelections(bet);
-  if (selections.length) return selections.join(", ");
-  return bet?.outcome || "Unknown outcome";
-}
-
-function getComboBetDetails(event, bets) {
-  const result = getComboResult(event);
-  const rows = (bets || []).map((bet) => {
-    const selections = getComboSelections(bet);
-    const matchCount = getComboMatchCount(selections, result);
-    const matchWeight = getComboMatchWeight(matchCount);
-    return {
-      bet,
-      selections,
-      matchCount,
-      matchWeight,
-      weightedStake: Number(bet.value || 0) * matchWeight,
-    };
-  });
-  const totalWeightedStake = event.bets.reduce((total, bet) => {
-    const matchCount = getComboMatchCount(getComboSelections(bet), result);
-    return total + Number(bet.value || 0) * getComboMatchWeight(matchCount);
-  }, 0);
-  const playerWeightedStake = rows.reduce((total, row) => total + row.weightedStake, 0);
-  return { result, rows, totalWeightedStake, playerWeightedStake };
 }
 
 function calculateComboEventPayouts(event, bonusAwarded = false) {
@@ -964,15 +870,6 @@ async function loadRemoteState() {
   render();
   checkPlayerWinPopups();
   updatePlayerAutoRefresh();
-}
-
-function groupBy(items, key) {
-  return items.reduce((map, item) => {
-    const groupKey = item[key];
-    if (!map.has(groupKey)) map.set(groupKey, []);
-    map.get(groupKey).push(item);
-    return map;
-  }, new Map());
 }
 
 function recalculateRemotePlayerPoints() {
@@ -1440,13 +1337,6 @@ async function pushStateToRemote() {
   }
 }
 
-function parseOutcomeLabels(value) {
-  return [...new Set(String(value || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean))];
-}
-
 function renderOutcomeFields(items = ["", ""]) {
   const outcomes = items.map(normalizeOutcome);
   els.outcomeFields.innerHTML = outcomes.map((outcome, index) => `
@@ -1508,10 +1398,6 @@ function getOutcomeFieldDraftItems() {
     probability: Number(input.dataset.outcomeProbability || 0),
     seedLiquidity: Number(input.dataset.seedLiquidity || 0),
   }));
-}
-
-function normalizeOutcomeLabel(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 async function runRemote(task) {
@@ -3525,19 +3411,6 @@ async function removeEvent(eventId) {
 
   state.events = state.events.filter((item) => item.id !== eventId);
   render();
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function escapeAttr(value) {
-  return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
 els.playerForm.addEventListener("submit", async (event) => {
