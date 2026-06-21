@@ -8,7 +8,9 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Oleary Bets" />
     <script>
-      document.documentElement.dataset.mode = new URLSearchParams(window.location.search).get("mode") === "host" ? "host" : "player";
+      const initialMode = new URLSearchParams(window.location.search).get("mode") === "host" ? "host" : "player";
+      document.documentElement.dataset.mode = initialMode;
+      if (initialMode === "player") document.querySelector('meta[name="theme-color"]').content = "#1D1F24";
     </script>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icon.svg" />
@@ -20,7 +22,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Friendly points betting</p>
-          <h1>Oleary Ave Poker Bets</h1>
+          <h1><span class="brand-first">Oleary Ave</span><span class="brand-second"> Poker Bets</span></h1>
         </div>
         <div class="toolbar">
           <span id="syncStatus" class="sync-status">Connecting...</span>
@@ -44,9 +46,11 @@
       </nav>
 
       <nav id="playerTabs" class="tabs player-tabs" aria-label="Player views" hidden>
-        <button id="playerProfileTab" class="tab active" type="button" data-player-tab="profile">Profile</button>
-        <button id="playerMarketsTab" class="tab" type="button" data-player-tab="markets">Markets</button>
-        <button id="playerSocialTab" class="tab" type="button" data-player-tab="social">Social</button>
+        <button id="playerMarketsTab" class="tab active" type="button" data-player-tab="markets"><span aria-hidden="true">&#8962;</span><span>Markets</span></button>
+        <button id="playerBetsTab" class="tab" type="button" data-player-tab="bets"><span aria-hidden="true">&#9635;</span><span>My Bets</span></button>
+        <button id="playerAnalyticsTab" class="tab" type="button" data-player-tab="analytics"><span aria-hidden="true">&#9645;</span><span>Analytics</span></button>
+        <button id="playerSocialTab" class="tab" type="button" data-player-tab="social"><span aria-hidden="true">&#9678;</span><span>Social</span></button>
+        <button id="playerProfileTab" class="tab" type="button" data-player-tab="profile"><span aria-hidden="true">&#9817;</span><span>Profile</span></button>
       </nav>
 
       <main class="layout">
@@ -78,6 +82,28 @@
             <button id="refreshPlayerMarkets" class="ghost" type="button">Refresh Markets</button>
           </div>
           <div id="playerMarketsList" class="events-list"></div>
+        </section>
+
+        <section id="playerBetsPanel" class="panel player-panel player-tab-panel" hidden>
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Your action</p>
+              <h2>My Bets</h2>
+              <p>Open and resolved bets from this session.</p>
+            </div>
+          </div>
+          <div id="playerBetsList" class="player-bets-screen"></div>
+        </section>
+
+        <section id="playerAnalyticsPanel" class="panel player-panel player-tab-panel" hidden>
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Session numbers</p>
+              <h2>Analytics</h2>
+              <p>A quick look at the current table.</p>
+            </div>
+          </div>
+          <div id="playerAnalytics" class="player-analytics"></div>
         </section>
 
         <section id="playerSocialPanel" class="panel player-panel player-tab-panel" hidden>
@@ -163,8 +189,8 @@
               Market type
               <select id="marketType">
                 <option value="Winner">Winner</option>
-                <option value="TopThree">TopThree</option>
                 <option value="TopThreeCombo">TopThreeCombo</option>
+                <option value="BottomThreeCombo">BottomThreeCombo</option>
                 <option value="FirstOut">FirstOut</option>
                 <option value="LastLonger">LastLonger</option>
                 <option value="Knockout">Knockout</option>
@@ -227,34 +253,53 @@
 
     <template id="betDialogTemplate">
       <dialog class="bet-dialog">
-        <form method="dialog" class="dialog-card">
+        <form method="dialog" class="dialog-card bet-builder-card">
           <div class="dialog-header">
             <div>
-              <p class="eyebrow">Place bet</p>
-              <h2 data-player-name></h2>
+              <p class="eyebrow" data-bet-kicker>Add bet</p>
+              <h2 data-market-title></h2>
               <p class="muted" data-market-name></p>
             </div>
             <button value="cancel" class="icon-button" aria-label="Close">x</button>
           </div>
 
-          <p class="muted" data-available></p>
+          <div data-bet-build-view>
+            <div class="bet-selection-heading">
+              <div>
+                <h3 data-selection-title>Select an outcome</h3>
+                <p class="muted" data-selection-help></p>
+              </div>
+              <strong data-selection-count></strong>
+            </div>
 
-          <label>
-            Outcome
-            <select data-outcome-choice>
-              <option value="">Choose outcome...</option>
-            </select>
-          </label>
+            <p class="bet-available" data-available></p>
+            <div class="bet-outcome-grid" data-bet-outcome-grid></div>
+            <p class="bet-selection-message" data-selection-message aria-live="polite"></p>
 
-          <label>
-            Bet value
-            <input data-bet-value type="number" min="0" step="1" />
-          </label>
+            <label class="bet-value-field">
+              Bet value
+              <input data-bet-value type="number" min="0" step="1" inputmode="numeric" placeholder="Points" />
+            </label>
 
-          <div class="dialog-actions">
-            <button value="remove" class="ghost" data-remove-bet>Remove Bet</button>
-            <button value="cancel" class="ghost">Cancel</button>
-            <button value="confirm">Place Bet</button>
+            <div class="dialog-actions">
+              <button type="button" class="ghost" data-remove-bet>Remove Bet</button>
+              <button value="cancel" class="ghost">Cancel</button>
+              <button type="button" data-review-bet>Review Bet</button>
+            </div>
+          </div>
+
+          <div data-bet-review-view hidden>
+            <div class="bet-review-slip">
+              <p class="eyebrow">Review bet</p>
+              <h3 data-review-market></h3>
+              <div class="bet-review-row"><span>Your pick</span><strong data-review-picks></strong></div>
+              <div class="bet-review-row"><span>Bet amount</span><strong data-review-value></strong></div>
+              <p class="bet-edit-note">This bet can be edited from My Bets until the market is closed.</p>
+            </div>
+            <div class="dialog-actions">
+              <button type="button" class="ghost" data-back-to-bet>Back</button>
+              <button type="button" data-confirm-bet>Confirm Bet</button>
+            </div>
           </div>
         </form>
       </dialog>
@@ -330,6 +375,13 @@
         </div>
         <button value="ok">Okay</button>
       </form>
+    </dialog>
+
+    <dialog id="playerMarketDialog" class="player-market-dialog">
+      <div class="player-market-dialog-card">
+        <button class="player-market-close" type="button" data-close-player-market aria-label="Close market">x</button>
+        <div id="playerMarketDetail"></div>
+      </div>
     </dialog>
 
     <dialog id="aiDisclaimerDialog" class="confirm-dialog">

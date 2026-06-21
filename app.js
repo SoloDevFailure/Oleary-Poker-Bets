@@ -2,7 +2,7 @@ const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
 const PLAYER_MARKETS_REFRESH_MS = 10000;
 const DEFAULT_SEED_POOL = 300;
-const MARKET_TYPES = ["Winner", "TopThree", "TopThreeCombo", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
+const MARKET_TYPES = ["Winner", "TopThree", "TopThreeCombo", "BottomThreeCombo", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
 const PROFILE_STATS = ["skill", "survivability", "volatility", "consistency", "recentForm", "aggression"];
 const DEFAULT_PLAYER_PROFILES = [
   { playerId: "dan", playerName: "Dan", skill: 92, survivability: 88, volatility: 28, consistency: 92, recentForm: 88, aggression: 70 },
@@ -28,17 +28,18 @@ const deviceKey = params.get("device") || localStorage.getItem("oleary-player-de
 localStorage.setItem("oleary-player-device-id", deviceKey);
 let currentPlayerId = localStorage.getItem(`oleary-player-id-${deviceKey}`) || null;
 let activeTab = localStorage.getItem("poker-night-bets-active-tab") || "players";
-let activePlayerTab = localStorage.getItem("poker-night-bets-player-tab") || "profile";
+let activePlayerTab = localStorage.getItem("poker-night-bets-player-tab-v2") || "markets";
 let playerAutoRefreshTimer = null;
 let playerAutoRefreshInFlight = false;
 const collapsedEvents = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-events") || "[]"));
 const expandedPlayers = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-players") || "[]"));
 const expandedOddsMenus = new Set(JSON.parse(localStorage.getItem("poker-night-bets-expanded-odds") || "[]"));
+const collapsedPlayerOddsMenus = new Set(JSON.parse(localStorage.getItem("poker-night-bets-collapsed-player-odds-v1") || "[]"));
 const aiDisclaimerKey = "oleary-ai-ratings-disclaimer-seen";
 const seenWinPayoutsKey = `oleary-seen-win-payouts-${deviceKey}`;
 const seenWinPayouts = new Set(JSON.parse(localStorage.getItem(seenWinPayoutsKey) || "[]"));
 let winPopupsPrimed = localStorage.getItem(`${seenWinPayoutsKey}-primed`) === "yes";
-const PLAYER_TAB_ORDER = ["profile", "markets", "social"];
+const PLAYER_TAB_ORDER = ["markets", "bets", "analytics", "social", "profile"];
 let playerTabDirection = "forward";
 let highlightedBetId = null;
 let highlightedEventId = null;
@@ -106,14 +107,22 @@ const els = {
   playerJoinName: document.querySelector("#playerJoinName"),
   playerProfileTab: document.querySelector("#playerProfileTab"),
   playerMarketsTab: document.querySelector("#playerMarketsTab"),
+  playerBetsTab: document.querySelector("#playerBetsTab"),
+  playerAnalyticsTab: document.querySelector("#playerAnalyticsTab"),
   playerSocialTab: document.querySelector("#playerSocialTab"),
   playerProfilePanel: document.querySelector("#playerProfilePanel"),
   playerMarketsPanel: document.querySelector("#playerMarketsPanel"),
+  playerBetsPanel: document.querySelector("#playerBetsPanel"),
+  playerAnalyticsPanel: document.querySelector("#playerAnalyticsPanel"),
   playerSocialPanel: document.querySelector("#playerSocialPanel"),
   playerProfile: document.querySelector("#playerProfile"),
   playerMarketsList: document.querySelector("#playerMarketsList"),
+  playerBetsList: document.querySelector("#playerBetsList"),
+  playerAnalytics: document.querySelector("#playerAnalytics"),
   refreshPlayerMarkets: document.querySelector("#refreshPlayerMarkets"),
   playerSocialList: document.querySelector("#playerSocialList"),
+  playerMarketDialog: document.querySelector("#playerMarketDialog"),
+  playerMarketDetail: document.querySelector("#playerMarketDetail"),
   playersTab: document.querySelector("#playersTab"),
   profilesTab: document.querySelector("#profilesTab"),
   createMarketTab: document.querySelector("#createMarketTab"),
@@ -256,8 +265,23 @@ function saveExpandedOddsMenus() {
   localStorage.setItem("poker-night-bets-expanded-odds", JSON.stringify([...expandedOddsMenus]));
 }
 
+function saveCollapsedPlayerOddsMenus() {
+  localStorage.setItem("poker-night-bets-collapsed-player-odds-v1", JSON.stringify([...collapsedPlayerOddsMenus]));
+}
+
 function setSyncStatus(text, mode) {
-  els.syncStatus.textContent = text;
+  if (appMode === "player" && mode === "online") {
+    const sessionCode = text.match(/Session\s+(.+)$/)?.[1] || "OLEARY";
+    const primary = document.createElement("span");
+    const secondary = document.createElement("span");
+    primary.className = "sync-primary";
+    primary.textContent = `Session ${sessionCode}`;
+    secondary.className = "sync-secondary";
+    secondary.textContent = text.includes("connected") ? "Supabase connected" : "Supabase synced";
+    els.syncStatus.replaceChildren(primary, secondary);
+  } else {
+    els.syncStatus.textContent = text;
+  }
   els.syncStatus.classList.toggle("online", mode === "online");
   els.syncStatus.classList.toggle("offline", mode === "offline");
   const waitingForSupabase = supabaseConfigured() && !remote.enabled && text !== "Local host mode";
@@ -601,13 +625,16 @@ function getOdds(event) {
 }
 
 function getProfileWeight(profile, marketType) {
+  const topThreeWeight = profile.survivability * 0.40 + profile.consistency * 0.30 + profile.skill * 0.20 + profile.recentForm * 0.10;
   switch (marketType) {
     case "Winner":
       return profile.skill * 0.45 + profile.survivability * 0.25 + profile.recentForm * 0.20 + profile.aggression * 0.10;
     case "TopThree":
     case "TopThreeCombo":
     case "LastLonger":
-      return profile.survivability * 0.40 + profile.consistency * 0.30 + profile.skill * 0.20 + profile.recentForm * 0.10;
+      return topThreeWeight;
+    case "BottomThreeCombo":
+      return Math.max(1, 100 - topThreeWeight);
     case "FirstOut":
       return (100 - profile.survivability) * 0.45 + profile.volatility * 0.30 + (100 - profile.consistency) * 0.20 + profile.aggression * 0.05;
     case "Knockout":
@@ -694,7 +721,15 @@ function calculateEventPayouts(event, bonusAwarded = false) {
 }
 
 function isTopThreeComboMarket(event) {
-  return event?.profileMarketType === "TopThreeCombo";
+  return event?.profileMarketType === "TopThreeCombo" || event?.profileMarketType === "BottomThreeCombo";
+}
+
+function getComboMarketName(event) {
+  return event?.profileMarketType === "BottomThreeCombo" ? "Bottom Three Combo" : "Top Three Combo";
+}
+
+function getComboResultDescription(event) {
+  return event?.profileMarketType === "BottomThreeCombo" ? "first three eliminated" : "final Top 3";
 }
 
 function getComboSelections(bet) {
@@ -1522,7 +1557,7 @@ async function placeBet(event, nextBet) {
   if (isTopThreeComboMarket(event) && !nextBet.id && event.bets.some((bet) => bet.playerId === nextBet.playerId)) {
     await askConfirm({
       title: "One combo bet only",
-      message: "Top Three Combo markets allow one bet per player. Edit your existing combo bet instead.",
+      message: `${getComboMarketName(event)} markets allow one bet per player. Edit your existing combo bet instead.`,
       action: "OK",
       notice: true,
     });
@@ -1588,6 +1623,7 @@ function render() {
   renderEvents();
   renderHostSocial();
   renderPlayerMode();
+  refreshOpenPlayerMarketDetail();
 }
 
 function renderMode() {
@@ -1604,6 +1640,8 @@ function renderMode() {
   els.playerJoinPanel.hidden = !isPlayer || Boolean(getCurrentPlayer());
   els.playerProfilePanel.hidden = !isPlayer || !getCurrentPlayer();
   els.playerMarketsPanel.hidden = !isPlayer || !getCurrentPlayer();
+  els.playerBetsPanel.hidden = !isPlayer || !getCurrentPlayer();
+  els.playerAnalyticsPanel.hidden = !isPlayer || !getCurrentPlayer();
   els.playerSocialPanel.hidden = !isPlayer || !getCurrentPlayer();
   els.exportData.hidden = isPlayer;
   els.importData.closest(".file-button").hidden = isPlayer;
@@ -1638,13 +1676,19 @@ function renderTabs() {
 function renderPlayerTabs() {
   const showProfile = activePlayerTab === "profile";
   const showMarkets = activePlayerTab === "markets";
+  const showBets = activePlayerTab === "bets";
+  const showAnalytics = activePlayerTab === "analytics";
   const showSocial = activePlayerTab === "social";
   document.body.dataset.playerTabDirection = playerTabDirection;
   els.playerProfileTab.classList.toggle("active", showProfile);
   els.playerMarketsTab.classList.toggle("active", showMarkets);
+  els.playerBetsTab.classList.toggle("active", showBets);
+  els.playerAnalyticsTab.classList.toggle("active", showAnalytics);
   els.playerSocialTab.classList.toggle("active", showSocial);
   els.playerProfilePanel.classList.toggle("active", showProfile);
   els.playerMarketsPanel.classList.toggle("active", showMarkets);
+  els.playerBetsPanel.classList.toggle("active", showBets);
+  els.playerAnalyticsPanel.classList.toggle("active", showAnalytics);
   els.playerSocialPanel.classList.toggle("active", showSocial);
   updatePlayerAutoRefresh();
 }
@@ -1767,6 +1811,8 @@ function renderPlayerMode() {
   if (!player) return;
   renderPlayerProfile(player);
   renderPlayerMarkets(player);
+  renderPlayerBets(player);
+  renderPlayerAnalytics(player);
   renderPlayerSocial(player);
 }
 
@@ -1806,26 +1852,111 @@ function renderPlayerMarkets(player) {
     return;
   }
 
-  els.playerMarketsList.innerHTML = sortMarketsForDisplay(markets).map((event, index) => renderPlayerMarket(event, player, index)).join("");
+  els.playerMarketsList.innerHTML = sortMarketsForDisplay(markets).map((event, index) => renderPlayerMarketCard(event, player, index)).join("");
 }
 
-function renderPlayerMarket(event, player, index = 0) {
+function getMarketDisplayTitle(event) {
+  const type = event.profileMarketType || "Custom";
+  const titles = {
+    TopThreeCombo: "PODIUM",
+    BottomThreeCombo: "WOODEN SPOON",
+    TopThree: "PODIUM",
+    FirstOut: "FIRST OUT",
+    Winner: "WINNER",
+    Knockout: "KNOCKOUT",
+    LastLonger: "LAST LONGER",
+    Chaos: "CHAOS MARKET",
+  };
+  return titles[type] || String(event.name || "CUSTOM MARKET").toUpperCase();
+}
+
+function getMarketSubtitle(event) {
+  const type = event.profileMarketType || "Custom";
+  const subtitles = {
+    TopThreeCombo: "Last three standing",
+    BottomThreeCombo: "First three players eliminated",
+    TopThree: "Last three standing",
+    FirstOut: "First player eliminated",
+    Winner: "Winner of the game / tournament",
+    Chaos: event.name || "Anything can happen",
+  };
+  if (type === "Knockout" || type === "LastLonger") return event.name || "Player matchup";
+  if (type === "Custom") return event.name || "Custom market";
+  return subtitles[type] || event.name || "Poker market";
+}
+
+function getMarketIcon(event) {
+  const icons = {
+    TopThreeCombo: "&#9733;",
+    BottomThreeCombo: "&#9835;",
+    TopThree: "&#9733;",
+    FirstOut: "&darr;",
+    Winner: "&#9819;",
+    Knockout: "KO",
+    LastLonger: "&harr;",
+    Chaos: "&nearr;",
+  };
+  return icons[event.profileMarketType] || "+";
+}
+
+function getMarketFavoriteDisplay(event) {
+  const odds = getOdds(event)
+    .filter((item) => item.total > 0)
+    .sort((a, b) => getDisplayProfitPerPoint(event, a) - getDisplayProfitPerPoint(event, b));
+  const count = event.profileMarketType === "TopThree" || isTopThreeComboMarket(event) ? 3 : 1;
+  return odds.slice(0, count).map((item) => item.outcome).join(", ") || "No favourite yet";
+}
+
+function getMarketBadges(event) {
+  const badges = [];
+  if (event.status === "resolved") badges.push('<span class="player-badge resolved">Resolved</span>');
+  if (event.status === "locked") badges.push('<span class="player-badge locked">Betting closed</span>');
+  if (isTopThreeComboMarket(event)) badges.push(`<span class="player-badge combo">${getComboMarketName(event)}</span>`);
+  if (event.bonusPoints > 0) badges.push('<span class="player-badge bonus">Bonus available</span>');
+  return badges.join("");
+}
+
+function renderPlayerMarketCard(event, player, index = 0) {
+  const pool = getEventPool(event);
+  const summary = getMarketSummary(event);
+  const animationAttrs = getMarketAnimationAttrs(event, index, "player-card");
+  return `
+    <button class="player-market-card market-type-${escapeAttr(String(event.profileMarketType || "custom").toLowerCase())}" data-open-player-market="${event.id}" ${animationAttrs}>
+      <span class="player-market-icon" aria-hidden="true">${getMarketIcon(event)}</span>
+      <span class="player-market-card-content">
+        <span class="player-market-title-row">
+          <strong>${escapeHtml(getMarketDisplayTitle(event))}</strong>
+          <span class="player-market-badges">${getMarketBadges(event)}</span>
+        </span>
+        <span class="player-market-subtitle">${escapeHtml(getMarketSubtitle(event))}</span>
+        <span class="player-market-stats">Pool: ${money(pool)} <i>&middot;</i> Payout pool: ${money(pool * (1 - TAX_RATE))}</span>
+        <span class="player-market-stats">${summary.totalBets} bet${summary.totalBets === 1 ? "" : "s"} placed <i>&middot;</i> Favourite: ${escapeHtml(getMarketFavoriteDisplay(event))}</span>
+      </span>
+      <span class="player-market-chevron" aria-hidden="true">&rsaquo;</span>
+    </button>
+  `;
+}
+
+function renderPlayerMarketDetail(event, player) {
   const pool = getEventPool(event);
   const playerBets = event.bets.filter((item) => item.playerId === player.id);
   const canBet = event.status === "open";
   const summary = getMarketSummary(event);
-  const animationAttrs = getMarketAnimationAttrs(event, index, "player");
   const highlightClass = event.id === highlightedEventId ? "success-pulse" : "";
   const isCombo = isTopThreeComboMarket(event);
 
   return `
-    <article class="event-card ${highlightClass}" ${animationAttrs}>
+    <article class="event-card player-market-detail-card ${highlightClass}">
       <div class="event-top">
         <div>
           <div class="event-meta">
-            <h3>${escapeHtml(event.name)}</h3>
+            <span class="player-market-icon detail-icon" aria-hidden="true">${getMarketIcon(event)}</span>
+            <div>
+              <h2>${escapeHtml(getMarketDisplayTitle(event))}</h2>
+              <p class="player-market-subtitle">${escapeHtml(getMarketSubtitle(event))}</p>
+            </div>
             <span class="pill ${event.status}">${event.status}</span>
-            ${isCombo ? '<span class="pill">Top Three Combo</span>' : ""}
+            ${isCombo ? `<span class="pill">${getComboMarketName(event)}</span>` : ""}
             ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus available</span>' : ""}
           </div>
           <p class="muted">Pool: ${money(pool)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
@@ -1835,22 +1966,22 @@ function renderPlayerMarket(event, player, index = 0) {
             <span>Favorite: <strong>${escapeHtml(summary.favorite)}</strong></span>
           </div>
           ${renderMarketMovement(summary.movements)}
-          ${renderPlayerMarketBets(event, playerBets, canBet)}
+          ${renderPlayerMarketBets(event, playerBets)}
         </div>
         <div class="event-actions">
           <button class="ghost" data-refresh-market="${event.id}">Refresh Odds</button>
-          <button ${canBet && playerBets.length === 0 ? "" : "disabled"} data-player-bet="${event.id}">Add Bet</button>
+          <button ${canBet && playerBets.length === 0 ? "" : "disabled"} data-player-bet="${event.id}">${playerBets.length ? "Bet Placed" : canBet ? "Add Bet" : "Market Closed"}</button>
         </div>
       </div>
       <div class="event-body">
         ${event.bonusPoints > 0 ? `<p class="muted">Bonus: <strong>${money(event.bonusPoints)}</strong> · ${escapeHtml(event.bonusLabel || "Host-triggered bonus")}</p>` : ""}
-        ${renderMarketOddsMenu(event, { showTotals: false })}
+        ${renderMarketOddsMenu(event, { showTotals: false, playerDefaultOpen: true })}
       </div>
     </article>
   `;
 }
 
-function renderPlayerMarketBets(event, playerBets, canBet) {
+function renderPlayerMarketBets(event, playerBets) {
   if (!playerBets.length) return '<p class="muted">You have not bet on this market.</p>';
   return `
     <div class="player-bet-list">
@@ -1858,9 +1989,140 @@ function renderPlayerMarketBets(event, playerBets, canBet) {
       ${playerBets.map((bet) => `
         <div class="player-bet-chip ${bet.id === highlightedBetId ? "success-pulse" : ""}">
           <span><strong>${money(bet.value)}</strong> on <strong>${escapeHtml(getBetPickText(bet))}</strong></span>
-          <button class="ghost mini-button" ${canBet ? "" : "disabled"} data-player-bet="${event.id}" data-bet-id="${bet.id}">Edit</button>
         </div>
       `).join("")}
+    </div>
+  `;
+}
+
+function openPlayerMarketDetail(eventId) {
+  const player = getCurrentPlayer();
+  const event = state.events.find((item) => item.id === eventId);
+  if (!player || !event || !els.playerMarketDialog || !els.playerMarketDetail) return;
+  els.playerMarketDialog.dataset.marketId = event.id;
+  els.playerMarketDetail.innerHTML = renderPlayerMarketDetail(event, player);
+  if (!els.playerMarketDialog.open) els.playerMarketDialog.showModal();
+}
+
+function refreshOpenPlayerMarketDetail() {
+  if (!els.playerMarketDialog?.open) return;
+  const eventId = els.playerMarketDialog.dataset.marketId;
+  const player = getCurrentPlayer();
+  const event = state.events.find((item) => item.id === eventId);
+  if (!player || !event) {
+    els.playerMarketDialog.close();
+    return;
+  }
+  els.playerMarketDetail.innerHTML = renderPlayerMarketDetail(event, player);
+}
+
+function getOpenBetPotential(event, bet) {
+  if (isTopThreeComboMarket(event) || event.status === "resolved") return null;
+  const oddsItem = getOdds(event).find((item) => item.outcome === bet.outcome);
+  if (!oddsItem || oddsItem.total <= 0) return null;
+  const profitPerPoint = getDisplayProfitPerPoint(event, oddsItem);
+  return Number(bet.value || 0) * (1 + profitPerPoint);
+}
+
+function renderPlayerBets(player) {
+  if (!els.playerBetsList) return;
+  const entries = state.events
+    .map((event) => ({ event, bets: event.bets.filter((bet) => bet.playerId === player.id) }))
+    .filter((entry) => entry.bets.length)
+    .sort((a, b) => {
+      const aResolved = a.event.status === "resolved";
+      const bResolved = b.event.status === "resolved";
+      if (aResolved !== bResolved) return aResolved ? 1 : -1;
+      return new Date(b.event.createdAt || 0) - new Date(a.event.createdAt || 0);
+    });
+
+  if (!entries.length) {
+    els.playerBetsList.innerHTML = '<div class="player-empty-state"><strong>No bets yet</strong><span>Open Markets and make your first pick.</span></div>';
+    return;
+  }
+
+  const renderGroup = (title, rows) => rows.length ? `
+    <section class="player-bet-group">
+      <h3>${title} <span>${rows.length}</span></h3>
+      ${rows.map(({ event, bets }) => {
+        const stake = bets.reduce((total, bet) => total + Number(bet.value || 0), 0);
+        const payout = getEventPayouts(event)
+          .filter((item) => item.playerId === player.id)
+          .reduce((total, item) => total + Number(item.amount || 0), 0);
+        const potentials = bets.map((bet) => getOpenBetPotential(event, bet)).filter((value) => value !== null);
+        const potential = potentials.length === bets.length ? potentials.reduce((total, value) => total + value, 0) : null;
+        const resolved = event.status === "resolved";
+        const resultClass = resolved ? (payout > 0 ? "win" : "loss") : "open";
+        return `
+          <article class="player-bet-screen-card ${resultClass} ${isTopThreeComboMarket(event) ? "combo-bet" : ""}">
+            <span class="player-bet-screen-heading">
+              <strong>${escapeHtml(getMarketDisplayTitle(event))}</strong>
+              <span class="player-badge ${resultClass}">${resolved ? (payout > 0 ? "Won" : "Lost") : event.status}</span>
+            </span>
+            <span class="player-bet-picks">${bets.map((bet) => `${money(bet.value)} on ${escapeHtml(getBetPickText(bet))}`).join(" &middot; ")}</span>
+            <span class="player-bet-return">
+              <span>Staked <strong>${money(stake)}</strong></span>
+              ${resolved ? `<span>Payout <strong>${money(payout)}</strong></span>` : potential !== null ? `<span>Potential <strong>${money(potential)}</strong></span>` : '<span>Pool payout</span>'}
+            </span>
+            <span class="player-bet-card-actions">
+              <button class="ghost mini-button" data-open-player-market="${event.id}">View Market</button>
+              ${event.status === "open" && bets[0] ? `<button data-player-bet="${event.id}" data-bet-id="${bets[0].id}">Edit Bet</button>` : ""}
+            </span>
+          </article>
+        `;
+      }).join("")}
+    </section>
+  ` : "";
+
+  els.playerBetsList.innerHTML = `
+    ${renderGroup("Open bets", entries.filter((entry) => entry.event.status !== "resolved"))}
+    ${renderGroup("Resolved bets", entries.filter((entry) => entry.event.status === "resolved"))}
+  `;
+}
+
+function renderPlayerAnalytics(player) {
+  if (!els.playerAnalytics) return;
+  const leaderboard = sortPlayers().slice(0, 5);
+  const activeMarkets = state.events.filter((event) => event.status !== "voided");
+  const mostBetMarket = [...activeMarkets].sort((a, b) => b.bets.length - a.bets.length)[0];
+  const performance = state.players.map((item) => ({ player: item, net: getPlayerActivity(item.id).net }));
+  const biggestWinner = [...performance].sort((a, b) => b.net - a.net)[0];
+  const biggestLoser = [...performance].sort((a, b) => a.net - b.net)[0];
+  const totalBets = state.events.reduce((total, event) => total + event.bets.length, 0);
+
+  els.playerAnalytics.innerHTML = `
+    <div class="analytics-hero">
+      <span><strong>${state.players.length}</strong> players</span>
+      <span><strong>${totalBets}</strong> bets</span>
+      <span><strong>${activeMarkets.length}</strong> markets</span>
+    </div>
+    <section class="analytics-card leaderboard-card">
+      <div class="analytics-title"><h3>Player leaderboard</h3><span>Your rank: ${sortPlayers().findIndex((item) => item.id === player.id) + 1}</span></div>
+      ${leaderboard.map((item, index) => `
+        <div class="leaderboard-row ${item.id === player.id ? "current" : ""}">
+          <span class="leaderboard-rank">${index + 1}</span>
+          <span class="leaderboard-avatar">${escapeHtml(item.name.charAt(0).toUpperCase())}</span>
+          <strong>${escapeHtml(item.name)}</strong>
+          <span>${money(item.points)}</span>
+        </div>
+      `).join("") || '<div class="empty compact">No players yet.</div>'}
+    </section>
+    <div class="analytics-grid">
+      <section class="analytics-card">
+        <p class="eyebrow">Most bet market</p>
+        <h3>${mostBetMarket ? escapeHtml(getMarketDisplayTitle(mostBetMarket)) : "No data yet"}</h3>
+        <p>${mostBetMarket ? `${mostBetMarket.bets.length} bets placed` : "Markets will appear here."}</p>
+      </section>
+      <section class="analytics-card">
+        <p class="eyebrow">Biggest winner</p>
+        <h3>${biggestWinner ? escapeHtml(biggestWinner.player.name) : "No data yet"}</h3>
+        <p class="positive">${biggestWinner ? `${biggestWinner.net >= 0 ? "+" : ""}${money(biggestWinner.net)} net` : "Waiting for results"}</p>
+      </section>
+      <section class="analytics-card">
+        <p class="eyebrow">Biggest loss</p>
+        <h3>${biggestLoser ? escapeHtml(biggestLoser.player.name) : "No data yet"}</h3>
+        <p class="negative">${biggestLoser ? `${money(biggestLoser.net)} net` : "Waiting for results"}</p>
+      </section>
     </div>
   `;
 }
@@ -2178,9 +2440,11 @@ function renderMarketSummary(event) {
 }
 
 function renderMarketOddsMenu(event, options = {}) {
-  const isExpanded = expandedOddsMenus.has(event.id);
+  const isExpanded = options.playerDefaultOpen
+    ? !collapsedPlayerOddsMenus.has(event.id)
+    : expandedOddsMenus.has(event.id);
   return `
-    <details class="odds-menu" data-odds-menu="${event.id}" ${isExpanded ? "open" : ""}>
+    <details class="odds-menu" data-odds-menu="${event.id}" ${options.playerDefaultOpen ? "data-player-default-open" : ""} ${isExpanded ? "open" : ""}>
       <summary>Available outcomes and odds</summary>
       <div class="odds-grid">${renderOdds(event, options)}</div>
     </details>
@@ -2285,10 +2549,10 @@ function renderOutcomePicker(event) {
     const options = outcomes.map((outcome) => `<option value="${escapeAttr(outcome)}">${escapeHtml(outcome)}</option>`).join("");
     return `
       <div class="combo-resolve">
-        <p class="muted">Call the final Top 3. Order does not matter.</p>
+        <p class="muted">Call the ${getComboResultDescription(event)}. Order does not matter.</p>
         ${[1, 2, 3].map((pick) => `
-          <select data-combo-outcome-select="${event.id}" aria-label="Top 3 pick ${pick}">
-            <option value="">Top 3 pick ${pick}...</option>
+          <select data-combo-outcome-select="${event.id}" aria-label="Combo result ${pick}">
+            <option value="">Result ${pick}...</option>
             ${options}
           </select>
         `).join("")}
@@ -2425,7 +2689,7 @@ async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType =
     id: uid(),
     name,
     status: "open",
-    marketType: profileMarketType === "TopThreeCombo" ? "combo" : "single",
+    marketType: isTopThreeComboMarket({ profileMarketType }) ? "combo" : "single",
     profileMarketType,
     payoutMode: "pool",
     payoutMultiplier: 1,
@@ -2597,8 +2861,8 @@ async function resolveComboEvent(event) {
   const uniqueSelections = [...new Set(selections.map((item) => item.toLowerCase()))];
   if (selections.length !== 3 || uniqueSelections.length !== 3) {
     await askConfirm({
-      title: "Choose final Top 3",
-      message: "Pick exactly three different players before confirming this combo market.",
+      title: "Choose three results",
+      message: `Pick exactly three different players for the ${getComboResultDescription(event)} before confirming this combo market.`,
       action: "OK",
       notice: true,
     });
@@ -2608,7 +2872,7 @@ async function resolveComboEvent(event) {
   const resultLabel = selections.join(", ");
   const confirmed = await askConfirm({
     title: "Confirm combo payout",
-    message: `Resolve "${event.name}" with Top 3: ${resultLabel}? Bets are paid by correct picks: 3 = 5x weight, 2 = 2x, 1 = 0.5x, 0 = no payout.${bonusAwarded ? ` Bonus included: ${money(event.bonusPoints)} points.` : ""}`,
+    message: `Resolve "${event.name}" with ${getComboResultDescription(event)}: ${resultLabel}? Bets are paid by correct picks: 3 = 5x weight, 2 = 2x, 1 = 0.5x, 0 = no payout.${bonusAwarded ? ` Bonus included: ${money(event.bonusPoints)} points.` : ""}`,
     action: "Apply payouts",
   });
   if (!confirmed) return;
@@ -2785,12 +3049,12 @@ async function givePointsToAllPlayers(value) {
   });
 }
 
-function openBetDialog(eventId, playerId, betId = null) {
+function openLegacyBetDialog(eventId, playerId, betId = null) {
   const event = state.events.find((item) => item.id === eventId);
   const player = state.players.find((item) => item.id === playerId);
   if (!event || !player || event.status !== "open") return;
   if (isTopThreeComboMarket(event)) {
-    openComboBetDialog(event, player, betId);
+    openLegacyComboBetDialog(event, player, betId);
     return;
   }
 
@@ -2891,7 +3155,7 @@ function openBetDialog(eventId, playerId, betId = null) {
   outcomeChoice.focus();
 }
 
-function openComboBetDialog(event, player, betId = null) {
+function openLegacyComboBetDialog(event, player, betId = null) {
   const existingBet = betId ? event.bets.find((item) => item.id === betId && item.playerId === player.id) : null;
   if (!existingBet && event.bets.some((item) => item.playerId === player.id)) {
     askConfirm({
@@ -3013,6 +3277,223 @@ function openComboBetDialog(event, player, betId = null) {
   comboChoices[0]?.focus();
 }
 
+function openBetDialog(eventId, playerId, betId = null) {
+  const event = state.events.find((item) => item.id === eventId);
+  const player = state.players.find((item) => item.id === playerId);
+  if (!event || !player || event.status !== "open") return;
+
+  const existingBet = betId ? event.bets.find((item) => item.id === betId && item.playerId === playerId) : null;
+  if (!existingBet && event.bets.some((item) => item.playerId === playerId)) {
+    askConfirm({
+      title: "One bet per market",
+      message: "You already have a bet on this market. Edit it from My Bets instead.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  const outcomes = getEventOutcomes(event);
+  const isCombo = isTopThreeComboMarket(event);
+  const requiredSelections = isCombo ? 3 : 1;
+  if (outcomes.length < requiredSelections) {
+    askConfirm({
+      title: "Not enough outcomes",
+      message: isCombo ? "Combo markets need at least three outcomes before taking bets." : "This market has no available outcomes.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+
+  const excludedBet = existingBet ? { betId: existingBet.id } : null;
+  const available = getAvailablePoints(playerId, excludedBet);
+  const initialSelections = isCombo ? getComboSelections(existingBet) : [existingBet?.outcome].filter(Boolean);
+  const selected = new Set(initialSelections.map(normalizeOutcomeLabel).filter(Boolean));
+  const oddsByOutcome = new Map(getOdds(event).map((item) => [item.outcome, item]));
+  const fragment = els.betDialogTemplate.content.cloneNode(true);
+  const dialog = fragment.querySelector("dialog");
+  const buildView = fragment.querySelector("[data-bet-build-view]");
+  const reviewView = fragment.querySelector("[data-bet-review-view]");
+  const valueInput = fragment.querySelector("[data-bet-value]");
+  const outcomeGrid = fragment.querySelector("[data-bet-outcome-grid]");
+  const selectionMessage = fragment.querySelector("[data-selection-message]");
+  const selectionCount = fragment.querySelector("[data-selection-count]");
+  const removeButton = fragment.querySelector("[data-remove-bet]");
+  const reviewButton = fragment.querySelector("[data-review-bet]");
+  const backButton = fragment.querySelector("[data-back-to-bet]");
+  const confirmButton = fragment.querySelector("[data-confirm-bet]");
+  const reviewMarket = fragment.querySelector("[data-review-market]");
+  const reviewPicks = fragment.querySelector("[data-review-picks]");
+  const reviewValue = fragment.querySelector("[data-review-value]");
+
+  fragment.querySelector("[data-bet-kicker]").textContent = existingBet ? "Edit bet" : "Add bet";
+  fragment.querySelector("[data-market-title]").textContent = getMarketDisplayTitle(event);
+  fragment.querySelector("[data-market-name]").textContent = event.name === getMarketDisplayTitle(event) ? "" : event.name;
+  fragment.querySelector("[data-selection-title]").textContent = isCombo ? "Pick exactly 3 different names" : "Select one outcome";
+  fragment.querySelector("[data-selection-help]").textContent = isCombo
+    ? "Order does not matter. Tap a selected name again to remove it."
+    : "Tap an outcome to select it.";
+  fragment.querySelector("[data-available]").textContent = `${money(available)} points available for this bet.`;
+  valueInput.max = available;
+  valueInput.value = existingBet?.value || "";
+  removeButton.hidden = !existingBet;
+
+  outcomeGrid.innerHTML = outcomes.map((outcome) => {
+    const oddsItem = oddsByOutcome.get(outcome);
+    const profitPerPoint = oddsItem && oddsItem.total > 0 ? getDisplayProfitPerPoint(event, oddsItem) : null;
+    const oddsText = profitPerPoint === null ? "Odds syncing" : formatOdds(profitPerPoint);
+    return `
+      <button type="button" class="bet-outcome-option" data-bet-outcome="${escapeAttr(outcome)}" aria-pressed="false">
+        <span class="bet-outcome-check" aria-hidden="true"></span>
+        <span class="bet-outcome-copy"><strong>${escapeHtml(outcome)}</strong><small>${escapeHtml(oddsText)}</small></span>
+      </button>
+    `;
+  }).join("");
+
+  const outcomeButtons = Array.from(outcomeGrid.querySelectorAll("[data-bet-outcome]"));
+  const updateSelection = () => {
+    outcomeButtons.forEach((button) => {
+      const active = selected.has(normalizeOutcomeLabel(button.dataset.betOutcome));
+      button.classList.toggle("selected", active);
+      button.setAttribute("aria-pressed", String(active));
+      button.querySelector(".bet-outcome-check").textContent = active ? "✓" : "";
+    });
+    selectionCount.textContent = isCombo ? `${selected.size}/3 selected` : `${selected.size}/1 selected`;
+    selectionMessage.textContent = selected.size
+      ? `Selected: ${[...selected].join(", ")}`
+      : isCombo ? "Select three names to continue." : "Select one outcome to continue.";
+  };
+
+  outcomeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const outcome = normalizeOutcomeLabel(button.dataset.betOutcome);
+      if (selected.has(outcome)) {
+        selected.delete(outcome);
+      } else if (requiredSelections === 1) {
+        selected.clear();
+        selected.add(outcome);
+      } else if (selected.size < requiredSelections) {
+        selected.add(outcome);
+      } else {
+        selectionMessage.textContent = "Three names are already selected. Untick one before choosing another.";
+        return;
+      }
+      updateSelection();
+    });
+  });
+
+  const validateDraft = () => {
+    const value = Math.floor(Number(valueInput.value));
+    if (selected.size !== requiredSelections) {
+      selectionMessage.textContent = isCombo ? "Choose exactly three different names." : "Choose one outcome.";
+      return null;
+    }
+    if (!Number.isFinite(value) || value <= 0) {
+      selectionMessage.textContent = "Enter a bet value greater than zero.";
+      valueInput.focus();
+      return null;
+    }
+    if (value > available) {
+      selectionMessage.textContent = `You have ${money(available)} points available for this bet.`;
+      valueInput.focus();
+      return null;
+    }
+    return { value, selections: [...selected] };
+  };
+
+  reviewButton.addEventListener("click", () => {
+    const draft = validateDraft();
+    if (!draft) return;
+    reviewMarket.textContent = `${getMarketDisplayTitle(event)} · ${event.name}`;
+    reviewPicks.textContent = draft.selections.join(", ");
+    reviewValue.textContent = `${money(draft.value)} points`;
+    buildView.hidden = true;
+    reviewView.hidden = false;
+    document.activeElement?.blur?.();
+  });
+
+  backButton.addEventListener("click", () => {
+    reviewView.hidden = true;
+    buildView.hidden = false;
+  });
+
+  confirmButton.addEventListener("click", async () => {
+    const draft = validateDraft();
+    if (!draft) {
+      reviewView.hidden = true;
+      buildView.hidden = false;
+      return;
+    }
+    confirmButton.disabled = true;
+    confirmButton.textContent = "Confirming...";
+
+    if (appMode === "player" && remoteReady()) {
+      try {
+        await loadRemoteState();
+      } catch (error) {
+        console.error("Bet confirmation refresh failed", error);
+      }
+    }
+
+    const latestEvent = state.events.find((item) => item.id === eventId);
+    const latestExistingBet = existingBet
+      ? latestEvent?.bets.find((item) => item.id === existingBet.id && item.playerId === playerId)
+      : null;
+    if (!latestEvent || latestEvent.status !== "open") {
+      dialog.close("cancel");
+      await askConfirm({
+        title: "Market is closed",
+        message: "This bet cannot be saved because betting has closed.",
+        action: "OK",
+        notice: true,
+      });
+      return;
+    }
+
+    const latestAvailable = getAvailablePoints(playerId, latestExistingBet ? { betId: latestExistingBet.id } : null);
+    if (draft.value > latestAvailable) {
+      confirmButton.disabled = false;
+      confirmButton.textContent = "Confirm Bet";
+      reviewView.hidden = true;
+      buildView.hidden = false;
+      selectionMessage.textContent = `Your available points changed. You can now bet up to ${money(latestAvailable)}.`;
+      valueInput.max = latestAvailable;
+      return;
+    }
+
+    const nextBet = {
+      ...(latestExistingBet || existingBet || {}),
+      playerId,
+      value: draft.value,
+      outcome: isCombo ? draft.selections.join(", ") : draft.selections[0],
+      selections: isCombo ? draft.selections : [],
+    };
+    dialog.close("confirm");
+    await placeBet(latestEvent, nextBet);
+  });
+
+  removeButton.addEventListener("click", () => {
+    dialog.close("remove");
+    if (!existingBet) return;
+    event.bets = event.bets.filter((item) => item.id !== existingBet.id);
+    render();
+    runRemote(() => deleteRemoteBet(event, playerId, existingBet.id));
+  });
+
+  valueInput.addEventListener("keydown", (keyEvent) => {
+    if (keyEvent.key !== "Enter") return;
+    keyEvent.preventDefault();
+    reviewButton.click();
+  });
+
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  document.body.appendChild(dialog);
+  updateSelection();
+  dialog.showModal();
+  outcomeButtons[0]?.focus();
+}
+
 async function removePlayer(playerId) {
   if (!requireHostMode()) return;
   const player = state.players.find((item) => item.id === playerId);
@@ -3120,7 +3601,7 @@ els.eventForm.addEventListener("submit", async (event) => {
   const name = els.eventName.value.trim();
   if (!name) return;
   const outcomeItems = getOutcomeFieldItems();
-  const requiredOutcomes = els.marketType.value === "TopThreeCombo" ? 3 : 2;
+  const requiredOutcomes = isTopThreeComboMarket({ profileMarketType: els.marketType.value }) ? 3 : 2;
   if (outcomeItems.length < requiredOutcomes) {
     await askConfirm({
       title: "Add outcomes",
@@ -3185,6 +3666,8 @@ document.addEventListener("click", (event) => {
   const removeProfileButton = event.target.closest("[data-remove-profile]");
   const refreshMarketButton = event.target.closest("[data-refresh-market]");
   const playerBetButton = event.target.closest("[data-player-bet]");
+  const openPlayerMarketButton = event.target.closest("[data-open-player-market]");
+  const closePlayerMarketButton = event.target.closest("[data-close-player-market]");
 
   if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId, openBet.dataset.betId || null);
   if (closeButton) closeEvent(closeButton.dataset.closeEvent);
@@ -3202,6 +3685,8 @@ document.addEventListener("click", (event) => {
     const player = getCurrentPlayer();
     if (player) openPlayerBetDialog(playerBetButton.dataset.playerBet, player.id, playerBetButton.dataset.betId || null);
   }
+  if (openPlayerMarketButton) openPlayerMarketDetail(openPlayerMarketButton.dataset.openPlayerMarket);
+  if (closePlayerMarketButton && els.playerMarketDialog?.open) els.playerMarketDialog.close();
   if (removeOutcomeButton) {
     if (!requireHostMode()) return;
     const outcomes = getOutcomeFieldDraftItems();
@@ -3211,9 +3696,22 @@ document.addEventListener("click", (event) => {
   if (removeProfileButton) removeProfile(removeProfileButton.dataset.removeProfile);
 });
 
+els.playerMarketDialog?.addEventListener("click", (event) => {
+  if (event.target === els.playerMarketDialog) els.playerMarketDialog.close();
+});
+
 document.addEventListener("toggle", (event) => {
   const oddsMenu = event.target.closest?.("[data-odds-menu]");
   if (!oddsMenu) return;
+  if (oddsMenu.hasAttribute("data-player-default-open")) {
+    if (oddsMenu.open) {
+      collapsedPlayerOddsMenus.delete(oddsMenu.dataset.oddsMenu);
+    } else {
+      collapsedPlayerOddsMenus.add(oddsMenu.dataset.oddsMenu);
+    }
+    saveCollapsedPlayerOddsMenus();
+    return;
+  }
   if (oddsMenu.open) {
     expandedOddsMenus.add(oddsMenu.dataset.oddsMenu);
   } else {
@@ -3543,7 +4041,7 @@ document.querySelectorAll("[data-player-tab]").forEach((button) => {
     const nextIndex = PLAYER_TAB_ORDER.indexOf(nextTab);
     playerTabDirection = nextIndex >= currentIndex ? "forward" : "back";
     activePlayerTab = nextTab;
-    localStorage.setItem("poker-night-bets-player-tab", activePlayerTab);
+    localStorage.setItem("poker-night-bets-player-tab-v2", activePlayerTab);
     renderPlayerTabs();
     if (remoteReady()) await refreshSharedState();
   });
