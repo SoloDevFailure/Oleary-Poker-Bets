@@ -431,64 +431,6 @@ function getAvailablePoints(playerId, excludedBet) {
   return Math.max(0, player.points - getReservedByPlayer(playerId, excludedBet));
 }
 
-function getEventPool(event) {
-  return event.bets.reduce((total, bet) => total + bet.value, 0);
-}
-
-function getSeedPool(event) {
-  return (event.outcomes || []).reduce((total, outcome) => total + Number(outcome.seedLiquidity || 0), 0);
-}
-
-function getOutcomeTotals(event) {
-  return event.bets.reduce((totals, bet) => {
-    if (isTopThreeComboMarket(event)) {
-      const selections = getComboSelections(bet);
-      const share = selections.length ? bet.value / selections.length : 0;
-      selections.forEach((selection) => {
-        totals[selection] = (totals[selection] || 0) + share;
-      });
-      return totals;
-    }
-    totals[bet.outcome] = (totals[bet.outcome] || 0) + bet.value;
-    return totals;
-  }, {});
-}
-
-function getSeedOutcomeTotals(event) {
-  return (event.outcomes || []).reduce((totals, outcome) => {
-    if (!outcome.label) return totals;
-    totals[outcome.label] = (totals[outcome.label] || 0) + Number(outcome.seedLiquidity || 0);
-    return totals;
-  }, {});
-}
-
-function getEventOutcomes(event) {
-  const betOutcomes = Object.keys(getOutcomeTotals(event));
-  const officialOutcomes = (event.outcomes || []).map((outcome) => outcome.label);
-  return [...new Set([...officialOutcomes, ...betOutcomes])].sort((a, b) => a.localeCompare(b));
-}
-
-function getOdds(event) {
-  const realPool = getEventPool(event);
-  const seedPool = getSeedPool(event);
-  const pool = realPool + seedPool;
-  const taxedPool = pool * (1 - TAX_RATE);
-  const outcomeTotals = getOutcomeTotals(event);
-  const seedTotals = getSeedOutcomeTotals(event);
-  const outcomes = getEventOutcomes(event);
-
-  return outcomes
-    .map((outcome) => {
-      const realTotal = outcomeTotals[outcome] || 0;
-      const seedTotal = seedTotals[outcome] || 0;
-      const total = realTotal + seedTotal;
-      const returnPerPoint = total > 0 && pool > 0 ? taxedPool / total : 0;
-      const profitPerPoint = returnPerPoint - 1;
-      return { outcome, total, realTotal, seedTotal, returnPerPoint, profitPerPoint };
-    })
-    .sort((a, b) => a.outcome.localeCompare(b.outcome));
-}
-
 function getProfileWeight(profile, marketType) {
   const topThreeWeight = profile.survivability * 0.40 + profile.consistency * 0.30 + profile.skill * 0.20 + profile.recentForm * 0.10;
   switch (marketType) {
@@ -546,94 +488,6 @@ function refreshProfileSeededOutcomes(outcomes) {
 
   if (!profiles.length) return manualOutcomes;
   return [...buildSeededOutcomes(els.marketType.value, profiles), ...manualOutcomes];
-}
-
-function getEventPayouts(event) {
-  if (Array.isArray(event.payouts) && event.payouts.length > 0) {
-    return normalizeStoredPayouts(event, event.payouts);
-  }
-
-  if (event.status !== "resolved" || (!event.winningOutcome && !isTopThreeComboMarket(event))) {
-    return [];
-  }
-
-  return calculateEventPayouts(event, Boolean(event.bonusAwarded));
-}
-
-function calculateEventPayouts(event, bonusAwarded = false) {
-  if (isTopThreeComboMarket(event)) {
-    return calculateComboEventPayouts(event, bonusAwarded);
-  }
-
-  const pool = getEventPool(event);
-  const taxedPool = pool * (1 - TAX_RATE);
-  const winnerTotal = event.bets
-    .filter((bet) => bet.outcome === event.winningOutcome)
-    .reduce((total, bet) => total + bet.value, 0);
-
-  if (winnerTotal <= 0) return [];
-
-  const payoutsByPlayer = event.bets
-    .filter((bet) => bet.outcome === event.winningOutcome)
-    .reduce((totals, bet) => {
-      const share = bet.value / winnerTotal;
-      const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * share : 0;
-      totals[bet.playerId] = (totals[bet.playerId] || 0) + share * taxedPool + bonusAmount;
-      return totals;
-    }, {});
-
-  return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
-}
-
-function calculateComboEventPayouts(event, bonusAwarded = false) {
-  const result = getComboResult(event);
-  if (result.length !== 3) return [];
-
-  const weightedRows = event.bets
-    .map((bet) => {
-      const matchCount = getComboMatchCount(getComboSelections(bet), result);
-      const matchWeight = getComboMatchWeight(matchCount);
-      return {
-        playerId: bet.playerId,
-        weightedStake: Number(bet.value || 0) * matchWeight,
-      };
-    })
-    .filter((row) => row.weightedStake > 0);
-
-  const totalWeightedStake = weightedRows.reduce((total, row) => total + row.weightedStake, 0);
-  if (totalWeightedStake <= 0) return [];
-
-  const pool = getEventPool(event);
-  const taxedPool = pool * (1 - TAX_RATE);
-  const payoutsByPlayer = weightedRows.reduce((totals, row) => {
-    const share = row.weightedStake / totalWeightedStake;
-    const bonusAmount = bonusAwarded ? Number(event.bonusPoints || 0) * share : 0;
-    totals[row.playerId] = (totals[row.playerId] || 0) + share * taxedPool + bonusAmount;
-    return totals;
-  }, {});
-
-  return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
-}
-
-function normalizeStoredPayouts(event, payouts) {
-  if (!event.bonusAwarded || Number(event.bonusPoints || 0) <= 0) return payouts;
-
-  const basePayouts = calculateEventPayouts(event, false);
-  const fullPayouts = calculateEventPayouts(event, true);
-  if (!basePayouts.length || !fullPayouts.length) return payouts;
-
-  const storedTotal = payouts.reduce((total, payout) => total + Number(payout.amount || 0), 0);
-  const baseTotal = basePayouts.reduce((total, payout) => total + Number(payout.amount || 0), 0);
-  const fullTotal = fullPayouts.reduce((total, payout) => total + Number(payout.amount || 0), 0);
-  const missingBonus = Math.abs(storedTotal - baseTotal) < 0.01 && Math.abs(fullTotal - baseTotal) > 0.01;
-  if (!missingBonus) return payouts;
-
-  const storedByPlayer = new Map(payouts.map((payout) => [payout.playerId, payout]));
-  return fullPayouts.map((payout) => ({
-    ...(storedByPlayer.get(payout.playerId) || {}),
-    ...payout,
-    noticeAmount: storedByPlayer.get(payout.playerId)?.amount,
-  }));
 }
 
 function remoteReady() {
@@ -1624,65 +1478,12 @@ function renderPlayerMarkets(player) {
   els.playerMarketsList.innerHTML = sortMarketsForDisplay(markets).map((event, index) => renderPlayerMarketCard(event, player, index)).join("");
 }
 
-function getMarketDisplayTitle(event) {
-  const type = event.profileMarketType || "Custom";
-  const titles = {
-    TopThreeCombo: "PODIUM",
-    BottomThreeCombo: "WOODEN SPOON",
-    TopThree: "PODIUM",
-    FirstOut: "FIRST OUT",
-    Winner: "WINNER",
-    Knockout: "KNOCKOUT",
-    LastLonger: "LAST LONGER",
-    Chaos: "CHAOS MARKET",
-  };
-  return titles[type] || String(event.name || "CUSTOM MARKET").toUpperCase();
-}
-
-function getMarketSubtitle(event) {
-  const type = event.profileMarketType || "Custom";
-  const subtitles = {
-    TopThreeCombo: "Last three standing",
-    BottomThreeCombo: "First three players eliminated",
-    TopThree: "Last three standing",
-    FirstOut: "First player eliminated",
-    Winner: "Winner of the game / tournament",
-    Chaos: event.name || "Anything can happen",
-  };
-  if (type === "Knockout" || type === "LastLonger") return event.name || "Player matchup";
-  if (type === "Custom") return event.name || "Custom market";
-  return subtitles[type] || event.name || "Poker market";
-}
-
-function getMarketIcon(event) {
-  const icons = {
-    TopThreeCombo: "&#9733;",
-    BottomThreeCombo: "&#9835;",
-    TopThree: "&#9733;",
-    FirstOut: "&darr;",
-    Winner: "&#9819;",
-    Knockout: "KO",
-    LastLonger: "&harr;",
-    Chaos: "&nearr;",
-  };
-  return icons[event.profileMarketType] || "+";
-}
-
 function getMarketFavoriteDisplay(event) {
   const odds = getOdds(event)
     .filter((item) => item.total > 0)
     .sort((a, b) => getDisplayProfitPerPoint(event, a) - getDisplayProfitPerPoint(event, b));
   const count = event.profileMarketType === "TopThree" || isTopThreeComboMarket(event) ? 3 : 1;
   return odds.slice(0, count).map((item) => item.outcome).join(", ") || "No favourite yet";
-}
-
-function getMarketBadges(event) {
-  const badges = [];
-  if (event.status === "resolved") badges.push('<span class="player-badge resolved">Resolved</span>');
-  if (event.status === "locked") badges.push('<span class="player-badge locked">Betting closed</span>');
-  if (isTopThreeComboMarket(event)) badges.push(`<span class="player-badge combo">${getComboMarketName(event)}</span>`);
-  if (event.bonusPoints > 0) badges.push('<span class="player-badge bonus">Bonus available</span>');
-  return badges.join("");
 }
 
 function renderPlayerMarketCard(event, player, index = 0) {
@@ -2105,15 +1906,6 @@ function renderEvents() {
   els.eventsList.innerHTML = sortMarketsForDisplay(state.events).map((event, index) => renderEvent(event, index)).join("");
 }
 
-function sortMarketsForDisplay(markets) {
-  return [...markets].sort((a, b) => {
-    const aResolved = a.status === "resolved" || a.status === "voided";
-    const bResolved = b.status === "resolved" || b.status === "voided";
-    if (aResolved !== bResolved) return aResolved ? 1 : -1;
-    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
-  });
-}
-
 function getMarketAnimationAttrs(event, index = 0, context = "host") {
   const key = `${context}:${event.remoteId || event.id}`;
   if (animatedMarketCards.has(key)) return "";
@@ -2348,13 +2140,6 @@ function formatRatio(value) {
   if (!Number.isFinite(value)) return "0";
   if (Math.abs(value - Math.round(value)) < 0.01) return String(Math.round(value));
   return value.toFixed(2).replace(/\.?0+$/, "");
-}
-
-function formatOdds(profitPerPoint) {
-  if (profitPerPoint > 1) return `${formatRatio(profitPerPoint)}:1`;
-  if (profitPerPoint > 0) return `1:${formatRatio(1 / profitPerPoint)}`;
-  if (Math.abs(profitPerPoint) < 0.01) return "Even";
-  return `${formatRatio(Math.abs(profitPerPoint * 100))}% tax loss`;
 }
 
 function getDisplayProfitPerPoint(event, oddsItem) {
