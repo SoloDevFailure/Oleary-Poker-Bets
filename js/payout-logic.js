@@ -15,6 +15,10 @@ function calculateEventPayouts(event, bonusAwarded = false) {
     return calculateComboEventPayouts(event, bonusAwarded);
   }
 
+  if (isFixedOddsMarket(event)) {
+    return calculateFixedOddsEventPayouts(event, bonusAwarded);
+  }
+
   const pool = getEventPool(event);
   const taxedPool = pool * (1 - TAX_RATE);
   const winnerTotal = event.bets
@@ -31,6 +35,25 @@ function calculateEventPayouts(event, bonusAwarded = false) {
       totals[bet.playerId] = (totals[bet.playerId] || 0) + share * taxedPool + bonusAmount;
       return totals;
     }, {});
+
+  return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
+}
+
+function calculateFixedOddsEventPayouts(event, bonusAwarded = false) {
+  const winningBets = event.bets.filter((bet) => bet.outcome === event.winningOutcome);
+  const totalWinningStake = winningBets.reduce((total, bet) => total + Number(bet.value || 0), 0);
+  if (totalWinningStake <= 0) return [];
+
+  const payoutsByPlayer = winningBets.reduce((totals, bet) => {
+    const stake = Number(bet.value || 0);
+    const lockedOdds = Number(bet.lockedOdds);
+    const multiplier = Number.isFinite(lockedOdds) && lockedOdds > 0 ? lockedOdds : 1;
+    const bonusAmount = bonusAwarded
+      ? Number(event.bonusPoints || 0) * (stake / totalWinningStake)
+      : 0;
+    totals[bet.playerId] = (totals[bet.playerId] || 0) + stake * multiplier + bonusAmount;
+    return totals;
+  }, {});
 
   return Object.entries(payoutsByPlayer).map(([playerId, amount]) => ({ playerId, amount }));
 }

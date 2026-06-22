@@ -6,6 +6,12 @@ function money(value) {
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function formatRatio(value) {
+  if (!Number.isFinite(value)) return "0";
+  if (Math.abs(value - Math.round(value)) < 0.01) return String(Math.round(value));
+  return value.toFixed(2).replace(/\.?0+$/, "");
+}
+
 function clampNumber(value, min, max) {
   const number = Math.round(Number(value));
   if (!Number.isFinite(number)) return min;

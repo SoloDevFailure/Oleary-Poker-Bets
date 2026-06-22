@@ -567,6 +567,7 @@ async function loadRemoteState() {
       marketType: market.market_type,
       payoutMode: market.payout_mode,
       payoutMultiplier: Number(market.payout_multiplier),
+      currentOdds: market.current_odds && typeof market.current_odds === "object" ? market.current_odds : {},
       taxRate: Number(market.tax_rate),
       bonusPoints: Number(market.bonus_points),
       bonusLabel: market.bonus_label,
@@ -589,6 +590,8 @@ async function loadRemoteState() {
           remoteId: bet.id,
           playerId: playerIdByRemoteId.get(bet.player_id),
           value: Number(bet.stake),
+          lockedOdds: Number(bet.locked_odds) > 0 ? Number(bet.locked_odds) : null,
+          potentialPayout: bet.potential_payout !== null && Number(bet.potential_payout) >= 0 ? Number(bet.potential_payout) : null,
           outcome: outcome?.label || "Unknown outcome",
           selections,
           outcomeRemoteId: bet.outcome_id,
@@ -670,6 +673,7 @@ async function saveRemoteMarket(event) {
     market_type: event.marketType || "single",
     payout_mode: event.payoutMode || "pool",
     payout_multiplier: Number(event.payoutMultiplier || 1),
+    current_odds: event.currentOdds || {},
     tax_rate: Number(event.taxRate ?? TAX_RATE),
     bonus_points: Number(event.bonusPoints || 0),
     bonus_label: event.bonusLabel || null,
@@ -952,6 +956,8 @@ async function saveRemoteBet(event, bet) {
     outcome_id: outcome.id,
     client_id: bet.id,
     stake: Number(bet.value),
+    locked_odds: Number(bet.lockedOdds) > 0 ? Number(bet.lockedOdds) : null,
+    potential_payout: Number(bet.potentialPayout) >= 0 ? Number(bet.potentialPayout) : null,
     selections: isTopThreeComboMarket(event) ? remoteSelections : [outcome.id],
     is_active: true,
   };
@@ -1177,6 +1183,10 @@ async function runRemote(task) {
 
 async function placeBet(event, nextBet) {
   const previousBets = [...event.bets];
+  const previousCurrentOdds = { ...(event.currentOdds || {}) };
+  if (isFixedOddsMarket(event) && Object.keys(previousCurrentOdds).length === 0) {
+    Object.assign(previousCurrentOdds, getRawFixedOdds(event));
+  }
   if (isTopThreeComboMarket(event) && !nextBet.id && event.bets.some((bet) => bet.playerId === nextBet.playerId)) {
     await askConfirm({
       title: "One combo bet only",
@@ -1202,16 +1212,24 @@ async function placeBet(event, nextBet) {
   } else {
     event.bets.push(bet);
   }
+  if (isFixedOddsMarket(event)) {
+    event.currentOdds = calculateNextFixedOdds(event, previousCurrentOdds);
+  }
   render();
 
   if (!remoteReady()) {
+    saveState();
     markBetSuccess(event.id, bet.id);
     return;
   }
 
-  const saved = await runRemote(() => saveRemoteBet(event, bet));
+  const saved = await runRemote(async () => {
+    await saveRemoteBet(event, bet);
+    if (isFixedOddsMarket(event)) await saveRemoteMarket(event);
+  });
   if (!saved) {
     event.bets = previousBets;
+    event.currentOdds = previousCurrentOdds;
     await loadRemoteState();
     await askConfirm({
       title: "Cannot place bet",
@@ -1481,7 +1499,12 @@ function renderPlayerMarkets(player) {
 function getMarketFavoriteDisplay(event) {
   const odds = getOdds(event)
     .filter((item) => item.total > 0)
-    .sort((a, b) => getDisplayProfitPerPoint(event, a) - getDisplayProfitPerPoint(event, b));
+    .sort((a, b) => {
+      if (isFixedOddsMarket(event)) {
+        return getCurrentFixedOdds(event, a.outcome) - getCurrentFixedOdds(event, b.outcome);
+      }
+      return getDisplayProfitPerPoint(event, a) - getDisplayProfitPerPoint(event, b);
+    });
   const count = event.profileMarketType === "TopThree" || isTopThreeComboMarket(event) ? 3 : 1;
   return odds.slice(0, count).map((item) => item.outcome).join(", ") || "No favourite yet";
 }
@@ -1530,6 +1553,7 @@ function renderPlayerMarketDetail(event, player) {
             ${event.bonusPoints > 0 ? '<span class="pill bonus-pill">✓ Bonus available</span>' : ""}
           </div>
           <p class="muted">Pool: ${money(pool)} · Payout pool: ${money(pool * (1 - TAX_RATE))}</p>
+          ${isFixedOddsMarket(event) ? '<p class="muted"><strong>Fixed odds:</strong> your payout multiplier locks when you confirm the bet.</p>' : ""}
           ${isCombo ? '<p class="muted">Pick exactly 3 different names. Order does not matter. One combo bet per player.</p>' : ""}
           <div class="market-quick-info">
             <span><strong>${summary.totalBets}</strong> bet${summary.totalBets === 1 ? "" : "s"} placed</span>
@@ -1558,7 +1582,10 @@ function renderPlayerMarketBets(event, playerBets) {
       <p class="muted">Your bets:</p>
       ${playerBets.map((bet) => `
         <div class="player-bet-chip ${bet.id === highlightedBetId ? "success-pulse" : ""}">
-          <span><strong>${money(bet.value)}</strong> on <strong>${escapeHtml(getBetPickText(bet))}</strong></span>
+          <span>
+            <strong>${money(bet.value)}</strong> on <strong>${escapeHtml(getBetPickText(bet))}</strong>
+            ${isFixedOddsMarket(event) ? ` · Locked at <strong>${formatFixedOdds(bet.lockedOdds || 1)}</strong> · Potential <strong>${money(bet.potentialPayout ?? Number(bet.value || 0) * Number(bet.lockedOdds || 1))}</strong>` : ""}
+          </span>
         </div>
       `).join("")}
     </div>
@@ -1588,6 +1615,9 @@ function refreshOpenPlayerMarketDetail() {
 
 function getOpenBetPotential(event, bet) {
   if (isTopThreeComboMarket(event) || event.status === "resolved") return null;
+  if (isFixedOddsMarket(event)) {
+    return Number(bet.potentialPayout ?? Number(bet.value || 0) * Number(bet.lockedOdds || 1));
+  }
   const oddsItem = getOdds(event).find((item) => item.outcome === bet.outcome);
   if (!oddsItem || oddsItem.total <= 0) return null;
   const profitPerPoint = getDisplayProfitPerPoint(event, oddsItem);
@@ -1629,7 +1659,7 @@ function renderPlayerBets(player) {
               <strong>${escapeHtml(getMarketDisplayTitle(event))}</strong>
               <span class="player-badge ${resultClass}">${resolved ? (payout > 0 ? "Won" : "Lost") : event.status}</span>
             </span>
-            <span class="player-bet-picks">${bets.map((bet) => `${money(bet.value)} on ${escapeHtml(getBetPickText(bet))}`).join(" &middot; ")}</span>
+            <span class="player-bet-picks">${bets.map((bet) => `${money(bet.value)} on ${escapeHtml(getBetPickText(bet))}${isFixedOddsMarket(event) ? ` at ${formatFixedOdds(bet.lockedOdds || 1)}` : ""}`).join(" &middot; ")}</span>
             <span class="player-bet-return">
               <span>Staked <strong>${money(stake)}</strong></span>
               ${resolved ? `<span>Payout <strong>${money(payout)}</strong></span>` : potential !== null ? `<span>Potential <strong>${money(potential)}</strong></span>` : '<span>Pool payout</span>'}
@@ -1838,6 +1868,34 @@ function renderPayoutBreakdown(event, playerId, bets, payout) {
 
   if (event.status !== "resolved" || payout <= 0 || !event.winningOutcome) return "";
 
+  if (isFixedOddsMarket(event)) {
+    const winningBets = bets.filter((bet) => bet.outcome === event.winningOutcome);
+    const winningStake = winningBets.reduce((total, bet) => total + Number(bet.value || 0), 0);
+    const totalWinningStake = event.bets
+      .filter((bet) => bet.outcome === event.winningOutcome)
+      .reduce((total, bet) => total + Number(bet.value || 0), 0);
+    if (winningStake <= 0 || totalWinningStake <= 0) return "";
+    const fixedReturn = winningBets.reduce((total, bet) => {
+      return total + Number(bet.value || 0) * Number(bet.lockedOdds || 1);
+    }, 0);
+    const bonusAmount = event.bonusAwarded
+      ? Number(event.bonusPoints || 0) * (winningStake / totalWinningStake)
+      : 0;
+    return `
+      <details class="payout-breakdown">
+        <summary>Payout breakdown</summary>
+        <div class="payout-breakdown-grid">
+          <span>Your stake</span><strong>${money(winningStake)}</strong>
+          <span>Winning outcome</span><strong>${escapeHtml(event.winningOutcome)}</strong>
+          <span>Locked odds</span><strong>${escapeHtml(winningBets.map((bet) => formatFixedOdds(bet.lockedOdds || 1)).join(" · "))}</strong>
+          <span>Fixed return</span><strong>${money(fixedReturn)}</strong>
+          ${event.bonusAwarded ? `<span>Bonus included</span><strong>${money(bonusAmount)}</strong>` : ""}
+          <span>Final payout</span><strong>${money(payout)}</strong>
+        </div>
+      </details>
+    `;
+  }
+
   const winningStake = bets
     .filter((bet) => bet.outcome === event.winningOutcome)
     .reduce((total, bet) => total + bet.value, 0);
@@ -2043,7 +2101,7 @@ function renderBetRow(event, player) {
   const bets = event.bets.filter((item) => item.playerId === player.id);
   const highlightClass = bets.some((bet) => bet.id === highlightedBetId) ? "success-pulse" : "";
   const detail = bets.length
-    ? bets.map((bet) => `${money(bet.value)} on ${escapeHtml(getBetPickText(bet))}`).join(" · ")
+    ? bets.map((bet) => `${money(bet.value)} on ${escapeHtml(getBetPickText(bet))}${isFixedOddsMarket(event) ? ` at ${formatFixedOdds(bet.lockedOdds || 1)} (potential ${money(bet.potentialPayout ?? Number(bet.value || 0) * Number(bet.lockedOdds || 1))})` : ""}`).join(" · ")
     : "No bet yet";
   const canEdit = event.status === "open";
 
@@ -2071,8 +2129,12 @@ function renderOdds(event, { showTotals = true } = {}) {
   return outcomes.map((outcome) => {
     const item = oddsByOutcome.get(outcome);
     const profitPerPoint = item && item.total > 0 ? getDisplayProfitPerPoint(event, item) : null;
-    const displayOdds = profitPerPoint === null ? "Syncing odds" : formatOdds(profitPerPoint);
-    const oddsTone = profitPerPoint !== null && profitPerPoint < 1 ? "bad-odds" : profitPerPoint > 15 ? "good-odds" : "";
+    const fixedMultiplier = isFixedOddsMarket(event) ? getCurrentFixedOdds(event, outcome) : null;
+    const displayOdds = isFixedOddsMarket(event)
+      ? formatFixedOdds(fixedMultiplier)
+      : profitPerPoint === null ? "Syncing odds" : formatOdds(profitPerPoint);
+    const toneValue = isFixedOddsMarket(event) ? fixedMultiplier : profitPerPoint;
+    const oddsTone = toneValue !== null && toneValue < 1 ? "bad-odds" : toneValue > 15 ? "good-odds" : "";
     const backed = item ? item.realTotal : 0;
     return `
       <div class="odds-row ${showTotals ? "" : "odds-row-compact"}">
@@ -2136,38 +2198,17 @@ function renderOutcomePicker(event) {
   `;
 }
 
-function formatRatio(value) {
-  if (!Number.isFinite(value)) return "0";
-  if (Math.abs(value - Math.round(value)) < 0.01) return String(Math.round(value));
-  return value.toFixed(2).replace(/\.?0+$/, "");
-}
-
-function getDisplayProfitPerPoint(event, oddsItem) {
-  if (!oddsItem || Number(oddsItem.seedTotal || 0) <= 0 || getSeedPool(event) <= 0) {
-    return oddsItem?.profitPerPoint || 0;
-  }
-
-  const realPool = getEventPool(event);
-  const seedPool = getSeedPool(event);
-  const seededOdds = getOdds(event).filter((item) => Number(item.seedTotal || 0) > 0);
-  const probabilities = seededOdds.map((item) => Number(item.seedTotal || 0) / seedPool);
-  const maxProbability = Math.max(...probabilities);
-  const minProbability = Math.min(...probabilities);
-  const probability = Number(oddsItem.seedTotal || 0) / seedPool;
-
-  const seededDisplay = Number.isFinite(probability) && maxProbability !== minProbability
-    ? 1 + ((maxProbability - probability) / (maxProbability - minProbability)) * 4
-    : 3;
-  const liveWeight = realPool > 0 ? Math.min(0.85, realPool / (realPool + seedPool)) : 0;
-  return seededDisplay * (1 - liveWeight) + (oddsItem.profitPerPoint || 0) * liveWeight;
-}
-
 function getMarketSummary(event) {
   const odds = getOdds(event);
   const totalBets = event.bets.length;
   const favorite = odds
     .filter((item) => item.total > 0)
-    .sort((a, b) => getDisplayProfitPerPoint(event, a) - getDisplayProfitPerPoint(event, b))[0];
+    .sort((a, b) => {
+      if (isFixedOddsMarket(event)) {
+        return getCurrentFixedOdds(event, a.outcome) - getCurrentFixedOdds(event, b.outcome);
+      }
+      return getDisplayProfitPerPoint(event, a) - getDisplayProfitPerPoint(event, b);
+    })[0];
   const movements = getMarketMovements(event, odds);
 
   return {
@@ -2245,7 +2286,7 @@ async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType =
     status: "open",
     marketType: isTopThreeComboMarket({ profileMarketType }) ? "combo" : "single",
     profileMarketType,
-    payoutMode: "pool",
+    payoutMode: isFixedOddsProfileType(profileMarketType) ? "fixed_odds" : "pool",
     payoutMultiplier: 1,
     taxRate: TAX_RATE,
     bonusPoints: Number(bonus.points || 0),
@@ -2253,10 +2294,14 @@ async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType =
     bets: [],
     seedPool: outcomeItems.reduce((total, outcome) => total + Number(outcome.seedLiquidity || 0), 0),
     outcomes: outcomeItems.map(normalizeOutcome),
+    currentOdds: {},
     winningOutcome: null,
     createdAt: new Date().toISOString(),
     lockedAt: null,
   };
+  if (isFixedOddsMarket(newEvent)) {
+    newEvent.currentOdds = getRawFixedOdds(newEvent);
+  }
   state.events.unshift(newEvent);
   activeTab = "events";
   localStorage.setItem("poker-night-bets-active-tab", activeTab);
@@ -2849,6 +2894,7 @@ function openBetDialog(eventId, playerId, betId = null) {
 
   const outcomes = getEventOutcomes(event);
   const isCombo = isTopThreeComboMarket(event);
+  const isFixed = isFixedOddsMarket(event);
   const requiredSelections = isCombo ? 3 : 1;
   if (outcomes.length < requiredSelections) {
     askConfirm({
@@ -2880,6 +2926,11 @@ function openBetDialog(eventId, playerId, betId = null) {
   const reviewMarket = fragment.querySelector("[data-review-market]");
   const reviewPicks = fragment.querySelector("[data-review-picks]");
   const reviewValue = fragment.querySelector("[data-review-value]");
+  const reviewOddsRow = fragment.querySelector("[data-review-odds-row]");
+  const reviewOdds = fragment.querySelector("[data-review-odds]");
+  const reviewPotentialRow = fragment.querySelector("[data-review-potential-row]");
+  const reviewPotential = fragment.querySelector("[data-review-potential]");
+  let reviewedLockedOdds = null;
 
   fragment.querySelector("[data-bet-kicker]").textContent = existingBet ? "Edit bet" : "Add bet";
   fragment.querySelector("[data-market-title]").textContent = getMarketDisplayTitle(event);
@@ -2896,7 +2947,9 @@ function openBetDialog(eventId, playerId, betId = null) {
   outcomeGrid.innerHTML = outcomes.map((outcome) => {
     const oddsItem = oddsByOutcome.get(outcome);
     const profitPerPoint = oddsItem && oddsItem.total > 0 ? getDisplayProfitPerPoint(event, oddsItem) : null;
-    const oddsText = profitPerPoint === null ? "Odds syncing" : formatOdds(profitPerPoint);
+    const oddsText = isFixed
+      ? formatFixedOdds(getCurrentFixedOdds(event, outcome))
+      : profitPerPoint === null ? "Odds syncing" : formatOdds(profitPerPoint);
     return `
       <button type="button" class="bet-outcome-option" data-bet-outcome="${escapeAttr(outcome)}" aria-pressed="false">
         <span class="bet-outcome-check" aria-hidden="true"></span>
@@ -2962,6 +3015,14 @@ function openBetDialog(eventId, playerId, betId = null) {
     reviewMarket.textContent = `${getMarketDisplayTitle(event)} · ${event.name}`;
     reviewPicks.textContent = draft.selections.join(", ");
     reviewValue.textContent = `${money(draft.value)} points`;
+    const selectedOdds = isFixed ? getCurrentFixedOdds(event, draft.selections[0]) : null;
+    reviewOddsRow.hidden = !isFixed;
+    reviewPotentialRow.hidden = !isFixed;
+    if (isFixed) {
+      reviewedLockedOdds = selectedOdds;
+      reviewOdds.textContent = formatFixedOdds(selectedOdds);
+      reviewPotential.textContent = `${money(draft.value * selectedOdds)} points`;
+    }
     buildView.hidden = true;
     reviewView.hidden = false;
     document.activeElement?.blur?.();
@@ -3016,6 +3077,18 @@ function openBetDialog(eventId, playerId, betId = null) {
       return;
     }
 
+    if (isFixedOddsMarket(latestEvent)) {
+      const latestLockedOdds = getCurrentFixedOdds(latestEvent, draft.selections[0]);
+      if (reviewedLockedOdds === null || Math.abs(latestLockedOdds - reviewedLockedOdds) > 0.000001) {
+        reviewedLockedOdds = latestLockedOdds;
+        reviewOdds.textContent = formatFixedOdds(latestLockedOdds);
+        reviewPotential.textContent = `${money(draft.value * latestLockedOdds)} points (odds updated)`;
+        confirmButton.disabled = false;
+        confirmButton.textContent = "Confirm Updated Bet";
+        return;
+      }
+    }
+
     const nextBet = {
       ...(latestExistingBet || existingBet || {}),
       playerId,
@@ -3023,6 +3096,13 @@ function openBetDialog(eventId, playerId, betId = null) {
       outcome: isCombo ? draft.selections.join(", ") : draft.selections[0],
       selections: isCombo ? draft.selections : [],
     };
+    if (isFixedOddsMarket(latestEvent)) {
+      nextBet.lockedOdds = reviewedLockedOdds || getCurrentFixedOdds(latestEvent, draft.selections[0]);
+      nextBet.potentialPayout = draft.value * nextBet.lockedOdds;
+    } else {
+      delete nextBet.lockedOdds;
+      delete nextBet.potentialPayout;
+    }
     dialog.close("confirm");
     await placeBet(latestEvent, nextBet);
   });
@@ -3030,9 +3110,20 @@ function openBetDialog(eventId, playerId, betId = null) {
   removeButton.addEventListener("click", () => {
     dialog.close("remove");
     if (!existingBet) return;
+    const previousCurrentOdds = { ...(event.currentOdds || {}) };
     event.bets = event.bets.filter((item) => item.id !== existingBet.id);
+    if (isFixedOddsMarket(event)) {
+      event.currentOdds = calculateNextFixedOdds(event, previousCurrentOdds);
+    }
     render();
-    runRemote(() => deleteRemoteBet(event, playerId, existingBet.id));
+    if (!remoteReady()) {
+      saveState();
+      return;
+    }
+    runRemote(async () => {
+      await deleteRemoteBet(event, playerId, existingBet.id);
+      if (isFixedOddsMarket(event)) await saveRemoteMarket(event);
+    });
   });
 
   valueInput.addEventListener("keydown", (keyEvent) => {

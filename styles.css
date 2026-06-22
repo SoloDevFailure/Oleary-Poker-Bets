@@ -1641,6 +1641,7 @@ html[data-mode="player"] .player-badge.combo {
 }
 
 html[data-mode="player"] .player-badge.bonus,
+html[data-mode="player"] .player-badge.fixed,
 html[data-mode="player"] .player-badge.open {
   background: rgba(24, 157, 255, 0.16);
   color: #68bdff;

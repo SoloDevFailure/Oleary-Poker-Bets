@@ -56,6 +56,67 @@ function getOdds(event) {
     .sort((a, b) => a.outcome.localeCompare(b.outcome));
 }
 
+function isFixedOddsProfileType(profileMarketType) {
+  return FIXED_ODDS_MARKET_TYPES.includes(profileMarketType);
+}
+
+function isFixedOddsMarket(event) {
+  return event?.payoutMode === "fixed_odds"
+    && isFixedOddsProfileType(event?.profileMarketType)
+    && !isTopThreeComboMarket(event);
+}
+
+function getDisplayProfitPerPoint(event, oddsItem) {
+  if (!oddsItem || Number(oddsItem.seedTotal || 0) <= 0 || getSeedPool(event) <= 0) {
+    return oddsItem?.profitPerPoint || 0;
+  }
+
+  const realPool = getEventPool(event);
+  const seedPool = getSeedPool(event);
+  const seededOdds = getOdds(event).filter((item) => Number(item.seedTotal || 0) > 0);
+  const probabilities = seededOdds.map((item) => Number(item.seedTotal || 0) / seedPool);
+  const maxProbability = Math.max(...probabilities);
+  const minProbability = Math.min(...probabilities);
+  const probability = Number(oddsItem.seedTotal || 0) / seedPool;
+
+  const seededDisplay = Number.isFinite(probability) && maxProbability !== minProbability
+    ? 1 + ((maxProbability - probability) / (maxProbability - minProbability)) * 4
+    : 3;
+  const liveWeight = realPool > 0 ? Math.min(0.85, realPool / (realPool + seedPool)) : 0;
+  return seededDisplay * (1 - liveWeight) + (oddsItem.profitPerPoint || 0) * liveWeight;
+}
+
+function getRawFixedOdds(event) {
+  return getOdds(event).reduce((odds, item) => {
+    const multiplier = 1 + getDisplayProfitPerPoint(event, item);
+    odds[item.outcome] = Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+    return odds;
+  }, {});
+}
+
+function getCurrentFixedOdds(event, outcome) {
+  const stored = Number(event?.currentOdds?.[outcome]);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  return Number(getRawFixedOdds(event)[outcome] || 1);
+}
+
+function clampFixedOddsMovement(previousOdds, nextOdds, limit = 0.2) {
+  const previous = Number(previousOdds);
+  const next = Number(nextOdds);
+  if (!Number.isFinite(next) || next <= 0) return Number.isFinite(previous) && previous > 0 ? previous : 1;
+  if (!Number.isFinite(previous) || previous <= 0) return next;
+  return Math.min(previous * (1 + limit), Math.max(previous * (1 - limit), next));
+}
+
+function calculateNextFixedOdds(event, previousOdds = event?.currentOdds || {}) {
+  const rawOdds = getRawFixedOdds(event);
+  return Object.fromEntries(getEventOutcomes(event).map((outcome) => {
+    const previous = Number(previousOdds?.[outcome]);
+    const raw = Number(rawOdds[outcome] || 1);
+    return [outcome, clampFixedOddsMovement(previous, raw)];
+  }));
+}
+
 function getMarketDisplayTitle(event) {
   const type = event.profileMarketType || "Custom";
   const titles = {
@@ -105,6 +166,7 @@ function getMarketBadges(event) {
   if (event.status === "resolved") badges.push('<span class="player-badge resolved">Resolved</span>');
   if (event.status === "locked") badges.push('<span class="player-badge locked">Betting closed</span>');
   if (isTopThreeComboMarket(event)) badges.push(`<span class="player-badge combo">${getComboMarketName(event)}</span>`);
+  if (isFixedOddsMarket(event)) badges.push('<span class="player-badge fixed">Fixed odds</span>');
   if (event.bonusPoints > 0) badges.push('<span class="player-badge bonus">Bonus available</span>');
   return badges.join("");
 }
@@ -123,4 +185,8 @@ function formatOdds(profitPerPoint) {
   if (profitPerPoint > 0) return `1:${formatRatio(1 / profitPerPoint)}`;
   if (Math.abs(profitPerPoint) < 0.01) return "Even";
   return `${formatRatio(Math.abs(profitPerPoint * 100))}% tax loss`;
+}
+
+function formatFixedOdds(multiplier) {
+  return `${formatRatio(Number(multiplier || 1))}x`;
 }

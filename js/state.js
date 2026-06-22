@@ -36,7 +36,16 @@ function normalizeState(rawState) {
     .forEach((profile) => nextState.playerProfiles.push(normalizeProfile(profile)));
   nextState.events.forEach((event) => {
     event.outcomes = Array.isArray(event.outcomes) ? event.outcomes.map(normalizeOutcome) : [];
+    event.bets = Array.isArray(event.bets) ? event.bets.map((bet) => ({
+      ...bet,
+      value: Number(bet.value || 0),
+      lockedOdds: Number(bet.lockedOdds) > 0 ? Number(bet.lockedOdds) : null,
+      potentialPayout: bet.potentialPayout !== null && bet.potentialPayout !== undefined && Number(bet.potentialPayout) >= 0
+        ? Number(bet.potentialPayout)
+        : null,
+    })) : [];
     event.seedPool = Number(event.seedPool || 0);
+    event.currentOdds = event.currentOdds && typeof event.currentOdds === "object" ? event.currentOdds : {};
     event.profileMarketType = MARKET_TYPES.includes(event.profileMarketType) ? event.profileMarketType : "Custom";
   });
   return nextState;

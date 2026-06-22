@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Poker Bets Payout Tests</title>
+  <style>
+    body {
+      max-width: 760px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #1d1f24;
+      color: #eaeaea;
+      font-family: system-ui, sans-serif;
+    }
+
+    h1 { margin-bottom: 8px; }
+    #summary { color: #a8adb7; }
+    #results { padding: 0; list-style: none; }
+    #results li {
+      margin: 8px 0;
+      padding: 12px;
+      border: 1px solid #383c45;
+      border-radius: 6px;
+      background: #272a31;
+    }
+    #results .pass { border-left: 4px solid #2fd66b; }
+    #results .fail { border-left: 4px solid #ff5d5d; }
+    #results small { display: block; margin-top: 6px; color: #ff9a9a; }
+  </style>
+</head>
+<body>
+  <h1>Payout Regression Tests</h1>
+  <p id="summary">Running tests...</p>
+  <ul id="results"></ul>
+
+  <script src="../js/constants.js"></script>
+  <script src="../js/utils.js"></script>
+  <script src="../js/state.js"></script>
+  <script src="../js/combo-logic.js"></script>
+  <script src="../js/market-logic.js"></script>
+  <script src="../js/payout-logic.js"></script>
+  <script src="./payout-tests.js"></script>
+</body>
+</html>

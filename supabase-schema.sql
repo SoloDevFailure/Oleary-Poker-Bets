@@ -14,9 +14,11 @@ exception when duplicate_object then null;
 end $$;
 
 do $$ begin
-  create type public.payout_mode as enum ('pool', 'pool_multiplier', 'fixed_bonus', 'host_defined');
+  create type public.payout_mode as enum ('pool', 'pool_multiplier', 'fixed_bonus', 'host_defined', 'fixed_odds');
 exception when duplicate_object then null;
 end $$;
+
+alter type public.payout_mode add value if not exists 'fixed_odds';
 
 do $$ begin
   create type public.player_status as enum ('pending', 'approved', 'blocked');
@@ -71,6 +73,7 @@ create table if not exists public.markets (
   market_type public.market_type not null default 'single',
   payout_mode public.payout_mode not null default 'pool',
   payout_multiplier numeric not null default 1 check (payout_multiplier > 0),
+  current_odds jsonb not null default '{}'::jsonb,
   tax_rate numeric not null default 0.1 check (tax_rate >= 0 and tax_rate < 1),
   bonus_points numeric not null default 0 check (bonus_points >= 0),
   bonus_label text,
@@ -81,6 +84,9 @@ create table if not exists public.markets (
   resolved_at timestamptz,
   voided_at timestamptz
 );
+
+alter table public.markets
+  add column if not exists current_odds jsonb not null default '{}'::jsonb;
 
 create index if not exists markets_session_status_idx
   on public.markets(session_id, status, created_at desc);
@@ -119,11 +125,19 @@ create table if not exists public.bets (
   player_id uuid not null references public.players(id) on delete cascade,
   outcome_id uuid references public.outcomes(id) on delete restrict,
   stake numeric not null check (stake > 0),
+  locked_odds numeric check (locked_odds > 0),
+  potential_payout numeric check (potential_payout >= 0),
   selections jsonb not null default '[]'::jsonb,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.bets
+  add column if not exists locked_odds numeric check (locked_odds > 0);
+
+alter table public.bets
+  add column if not exists potential_payout numeric check (potential_payout >= 0);
 
 -- Players can place multiple active bets per market.
 drop index if exists bets_one_active_bet_per_player_market;
