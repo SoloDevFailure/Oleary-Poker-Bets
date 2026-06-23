@@ -1550,6 +1550,40 @@ html[data-mode="player"] .player-market-card:hover {
   background: #2c3038;
 }
 
+html[data-mode="player"] .player-market-card.market-status-resolved {
+  background: #24262b;
+  border-color: #3a3d45;
+  filter: grayscale(1);
+  opacity: 0.58;
+}
+
+html[data-mode="player"] .player-market-card.market-status-resolved:hover {
+  background: #282a30;
+  opacity: 0.68;
+}
+
+html[data-mode="player"] .player-market-card.market-status-resolved .player-market-icon {
+  background: rgba(168, 173, 183, 0.08);
+  border-color: #6f7480;
+  color: #9ca2ad;
+}
+
+html[data-mode="player"] .player-market-card.market-status-resolved .player-market-title-row > strong,
+html[data-mode="player"] .player-market-card.market-status-resolved .player-market-chevron,
+html[data-mode="player"] .player-market-card.market-status-resolved .player-market-subtitle {
+  color: #8f949d;
+}
+
+html[data-mode="player"] .player-market-card.market-status-resolved .player-market-stats,
+html[data-mode="player"] .player-market-card.market-status-resolved .player-market-stats i {
+  color: #747983;
+}
+
+html[data-mode="player"] .player-market-card.market-status-resolved .player-badge {
+  background: #373a40;
+  color: #a1a6ae;
+}
+
 html[data-mode="player"] .player-market-card[data-animate-card] {
   animation: card-enter 260ms ease both;
   animation-delay: var(--card-delay, 0ms);

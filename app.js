@@ -1513,8 +1513,9 @@ function renderPlayerMarketCard(event, player, index = 0) {
   const pool = getEventPool(event);
   const summary = getMarketSummary(event);
   const animationAttrs = getMarketAnimationAttrs(event, index, "player-card");
+  const statusClass = `market-status-${event.status || "open"}`;
   return `
-    <button class="player-market-card market-type-${escapeAttr(String(event.profileMarketType || "custom").toLowerCase())}" data-open-player-market="${event.id}" ${animationAttrs}>
+    <button class="player-market-card market-type-${escapeAttr(String(event.profileMarketType || "custom").toLowerCase())} ${escapeAttr(statusClass)}" data-open-player-market="${event.id}" ${animationAttrs}>
       <span class="player-market-icon" aria-hidden="true">${getMarketIcon(event)}</span>
       <span class="player-market-card-content">
         <span class="player-market-title-row">
