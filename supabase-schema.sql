@@ -73,6 +73,16 @@ alter table public.players
   add column if not exists achievements text[] not null default '{}'::text[],
   add column if not exists title text;
 
+-- Fresh account deployment: old local-only player rows cannot be logged into
+-- because they never had usernames or PIN hashes.
+delete from public.players
+where username is null
+   or pin_hash is null;
+
+alter table public.players
+  alter column username set not null,
+  alter column pin_hash set not null;
+
 create unique index if not exists players_one_device_per_session
   on public.players(session_id, device_id)
   where device_id is not null;

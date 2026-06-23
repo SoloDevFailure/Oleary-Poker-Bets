@@ -14,11 +14,16 @@ alter table public.players
   add column if not exists achievements text[] not null default '{}'::text[],
   add column if not exists title text;
 
+-- This account system is for a fresh deployment. Old local-only player rows
+-- cannot be logged into because they never had usernames or PIN hashes, so
+-- remove them before enforcing account requirements.
+delete from public.players
+where username is null
+   or pin_hash is null;
+
 create unique index if not exists players_one_username
   on public.players(lower(username));
 
--- Fresh deployments should have username and pin_hash as required account fields.
--- If you have no existing players, these constraints are safe to apply.
 alter table public.players
   alter column username set not null,
   alter column pin_hash set not null;
