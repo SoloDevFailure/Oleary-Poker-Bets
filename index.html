@@ -60,12 +60,43 @@
             <div>
               <p class="muted">Welcome to</p>
               <h2>Oleary Poker Bets</h2>
-              <p>Choose your name to join the current poker session.</p>
+              <p>Log in or create an account to join the current poker session.</p>
             </div>
           </div>
-          <form id="playerJoinForm" class="inline-form">
-            <input id="playerJoinName" type="text" placeholder="Username" autocomplete="off" />
-            <button type="submit">Join</button>
+          <div class="account-switcher" role="tablist" aria-label="Account action">
+            <button id="showLoginForm" class="active" type="button">Login</button>
+            <button id="showCreateAccountForm" type="button">Create Account</button>
+          </div>
+          <p id="accountError" class="account-error" role="alert" hidden></p>
+          <form id="playerLoginForm" class="account-form">
+            <label>
+              <span>Username</span>
+              <input id="loginUsername" type="text" placeholder="Username" autocomplete="username" />
+            </label>
+            <label>
+              <span>PIN</span>
+              <input id="loginPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="4-6 digit PIN" autocomplete="current-password" />
+            </label>
+            <button type="submit">Login</button>
+          </form>
+          <form id="playerCreateAccountForm" class="account-form" hidden>
+            <label>
+              <span>Username</span>
+              <input id="createUsername" type="text" placeholder="Choose a username" autocomplete="username" />
+            </label>
+            <label>
+              <span>Display name</span>
+              <input id="createDisplayName" type="text" placeholder="Name shown to friends" autocomplete="name" />
+            </label>
+            <label>
+              <span>PIN</span>
+              <input id="createPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="4-6 digit PIN" autocomplete="new-password" />
+            </label>
+            <label>
+              <span>Confirm PIN</span>
+              <input id="confirmPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Repeat PIN" autocomplete="new-password" />
+            </label>
+            <button type="submit">Create Account</button>
           </form>
         </section>
 

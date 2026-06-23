@@ -1439,6 +1439,83 @@ html[data-mode="player"] .player-tab-panel {
 html[data-mode="player"] #playerJoinPanel {
   background: var(--player-card);
   border: 1px solid var(--player-border);
+  border-radius: 14px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.24);
+  margin-top: 0.6rem;
+  padding: 1rem;
+}
+
+html[data-mode="player"] .account-switcher {
+  background: #1b1e24;
+  border: 1px solid var(--player-border);
+  border-radius: 12px;
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: 1fr 1fr;
+  margin: 0.85rem 0;
+  padding: 0.3rem;
+}
+
+html[data-mode="player"] .account-switcher button {
+  background: transparent;
+  border: 0;
+  color: var(--player-muted);
+  min-height: 2.7rem;
+}
+
+html[data-mode="player"] .account-switcher button.active {
+  background: var(--player-blue);
+  color: #06111d;
+}
+
+html[data-mode="player"] .account-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+html[data-mode="player"] .account-form label {
+  color: var(--player-muted);
+  display: grid;
+  font-size: 0.78rem;
+  font-weight: 800;
+  gap: 0.35rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+html[data-mode="player"] .account-form input {
+  background: #1b1e24;
+  border: 1px solid var(--player-border);
+  border-radius: 10px;
+  color: var(--player-text);
+  font-size: 1rem;
+  min-height: 3.25rem;
+}
+
+html[data-mode="player"] .account-form button {
+  background: var(--player-blue);
+  color: #06111d;
+  min-height: 3.25rem;
+}
+
+html[data-mode="player"] .account-error {
+  background: rgba(255, 93, 93, 0.12);
+  border: 1px solid rgba(255, 93, 93, 0.35);
+  border-radius: 10px;
+  color: #ffaaaa;
+  font-weight: 800;
+  margin: 0 0 0.85rem;
+  padding: 0.75rem;
+}
+
+html[data-mode="player"] .logout-button {
+  margin: 0.85rem 0;
+  width: 100%;
+}
+
+html[data-mode="player"] #playerJoinPanel {
+  background: var(--player-card);
+  border: 1px solid var(--player-border);
   border-radius: 8px;
   padding: 1rem;
 }

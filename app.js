@@ -5,7 +5,9 @@ const appMode = requestedMode === "host" ? "host" : "player";
 document.documentElement.dataset.mode = appMode;
 const deviceKey = params.get("device") || localStorage.getItem("oleary-player-device-id") || uid();
 localStorage.setItem("oleary-player-device-id", deviceKey);
-let currentPlayerId = localStorage.getItem(`oleary-player-id-${deviceKey}`) || null;
+const storedPlayerSession = JSON.parse(localStorage.getItem(PLAYER_ACCOUNT_SESSION_KEY) || "null");
+let currentPlayerId = storedPlayerSession?.playerId || null;
+let accountFormMode = "login";
 let activeTab = localStorage.getItem("poker-night-bets-active-tab") || "players";
 let activePlayerTab = localStorage.getItem("poker-night-bets-player-tab-v2") || "markets";
 let playerAutoRefreshTimer = null;
@@ -81,8 +83,17 @@ const els = {
   betDialogTemplate: document.querySelector("#betDialogTemplate"),
   playerTabs: document.querySelector("#playerTabs"),
   playerJoinPanel: document.querySelector("#playerJoinPanel"),
-  playerJoinForm: document.querySelector("#playerJoinForm"),
-  playerJoinName: document.querySelector("#playerJoinName"),
+  showLoginForm: document.querySelector("#showLoginForm"),
+  showCreateAccountForm: document.querySelector("#showCreateAccountForm"),
+  accountError: document.querySelector("#accountError"),
+  playerLoginForm: document.querySelector("#playerLoginForm"),
+  loginUsername: document.querySelector("#loginUsername"),
+  loginPin: document.querySelector("#loginPin"),
+  playerCreateAccountForm: document.querySelector("#playerCreateAccountForm"),
+  createUsername: document.querySelector("#createUsername"),
+  createDisplayName: document.querySelector("#createDisplayName"),
+  createPin: document.querySelector("#createPin"),
+  confirmPin: document.querySelector("#confirmPin"),
   playerProfileTab: document.querySelector("#playerProfileTab"),
   playerMarketsTab: document.querySelector("#playerMarketsTab"),
   playerBetsTab: document.querySelector("#playerBetsTab"),
@@ -384,6 +395,74 @@ function getPlayerJoinUrl() {
   return url.toString();
 }
 
+function normalizeUsernameInput(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidPin(pin) {
+  return /^[0-9]{4,6}$/.test(String(pin || ""));
+}
+
+function setAccountError(message = "") {
+  if (!els.accountError) return;
+  els.accountError.hidden = !message;
+  els.accountError.textContent = message;
+}
+
+function storePlayerSession(player) {
+  currentPlayerId = player.id;
+  localStorage.setItem(PLAYER_ACCOUNT_SESSION_KEY, JSON.stringify({
+    playerId: player.id,
+    username: player.username || "",
+    displayName: player.name || "",
+    loggedInAt: new Date().toISOString(),
+  }));
+}
+
+function clearPlayerSession() {
+  currentPlayerId = null;
+  localStorage.removeItem(PLAYER_ACCOUNT_SESSION_KEY);
+}
+
+function mapRemotePlayer(player, adjustments = []) {
+  return {
+    id: player.id,
+    remoteId: player.id,
+    username: player.username || "",
+    name: player.display_name,
+    points: Number(player.points),
+    startingPoints: Number(player.starting_points),
+    status: player.status,
+    deviceId: player.device_id,
+    createdAt: player.created_at,
+    lastLoginAt: player.last_login_at || null,
+    profileImageUrl: player.profile_image_url || null,
+    profileBannerUrl: player.profile_banner_url || null,
+    profileCustomization: player.profile_customization || {},
+    badges: Array.isArray(player.badges) ? player.badges : [],
+    achievements: Array.isArray(player.achievements) ? player.achievements : [],
+    title: player.title || "",
+    adjustments: adjustments.map((adjustment) => ({
+      id: adjustment.id,
+      type: Number(adjustment.amount) >= 0 ? "bonus" : "penalty",
+      value: Math.abs(Number(adjustment.amount)),
+      createdAt: adjustment.created_at,
+    })),
+  };
+}
+
+function upsertLocalPlayer(player) {
+  if (!player) return null;
+  const mapped = mapRemotePlayer(player);
+  const index = state.players.findIndex((item) => item.id === mapped.id || item.remoteId === mapped.id);
+  if (index >= 0) {
+    state.players[index] = { ...state.players[index], ...mapped };
+  } else {
+    state.players.push(mapped);
+  }
+  return state.players.find((item) => item.id === mapped.id);
+}
+
 async function showPlayerQrCode() {
   if (!requireHostMode()) return;
   const playerUrl = getPlayerJoinUrl();
@@ -499,7 +578,7 @@ async function loadRemoteState() {
 
   const sessionId = remote.session.id;
   const [{ data: players, error: playersError }, { data: markets, error: marketsError }, { data: adjustments, error: adjustmentsError }] = await Promise.all([
-    remote.client.from("players").select("*").eq("session_id", sessionId).order("created_at", { ascending: true }),
+    remote.client.from("players").select("id,client_id,session_id,username,display_name,device_id,status,starting_points,points,created_at,updated_at,last_login_at,profile_image_url,profile_banner_url,profile_customization,badges,achievements,title").eq("session_id", sessionId).order("created_at", { ascending: true }),
     remote.client.from("markets").select("*").eq("session_id", sessionId).order("created_at", { ascending: false }),
     remote.client.from("adjustments").select("*").eq("session_id", sessionId).order("created_at", { ascending: true }),
   ]);
@@ -525,26 +604,9 @@ async function loadRemoteState() {
 
   const playerIdByRemoteId = new Map();
   state.players = (players || []).map((player) => {
-    const localId = player.client_id || player.id;
+    const localId = player.id;
     playerIdByRemoteId.set(player.id, localId);
-    return {
-      id: localId,
-      remoteId: player.id,
-      name: player.display_name,
-      points: Number(player.points),
-      startingPoints: Number(player.starting_points),
-      status: player.status,
-      deviceId: player.device_id,
-      createdAt: player.created_at,
-      adjustments: (adjustments || [])
-        .filter((adjustment) => adjustment.player_id === player.id)
-        .map((adjustment) => ({
-          id: adjustment.id,
-          type: Number(adjustment.amount) >= 0 ? "bonus" : "penalty",
-          value: Math.abs(Number(adjustment.amount)),
-          createdAt: adjustment.created_at,
-        })),
-    };
+    return mapRemotePlayer(player, (adjustments || []).filter((adjustment) => adjustment.player_id === player.id));
   });
 
   const outcomesById = new Map((remoteOutcomes.data || []).map((outcome) => [outcome.id, outcome]));
@@ -621,12 +683,8 @@ async function loadRemoteState() {
   });
   recalculateRemotePlayerPoints();
 
-  if (appMode === "player") {
-    const devicePlayer = state.players.find((player) => player.deviceId === deviceKey);
-    if (devicePlayer) {
-      currentPlayerId = devicePlayer.id;
-      localStorage.setItem(`oleary-player-id-${deviceKey}`, currentPlayerId);
-    }
+  if (appMode === "player" && currentPlayerId && !state.players.some((player) => player.id === currentPlayerId)) {
+    clearPlayerSession();
   }
 
   render();
@@ -754,100 +812,94 @@ function buildWinningSelectionPayload(event) {
 
 async function saveRemotePlayer(player) {
   if (!remoteReady()) return;
+  if (!player.remoteId) {
+    throw new Error("Players must create an account before they can be saved to Supabase.");
+  }
 
   const payload = {
     session_id: remote.session.id,
-    client_id: player.id,
     display_name: player.name,
     status: player.status || "approved",
     starting_points: Number(player.startingPoints ?? player.points ?? 100),
     points: Number(player.points),
   };
 
-  if (player.remoteId) {
-    const { data: updated, error } = await remote.client
-      .from("players")
-      .update(payload)
-      .eq("id", player.remoteId)
-      .select("*")
-      .maybeSingle();
-    if (error) throw error;
-    if (updated) return;
-    player.remoteId = null;
-  }
-
-  const { data, error } = await remote.client
+  const { data: updated, error } = await remote.client
     .from("players")
-    .insert(payload)
-    .select("*")
-    .single();
-
+    .update(payload)
+    .eq("id", player.remoteId)
+    .select("id,username,display_name,status,starting_points,points,created_at,updated_at,last_login_at,profile_image_url,profile_banner_url,profile_customization,badges,achievements,title")
+    .maybeSingle();
   if (error) throw error;
-  player.remoteId = data.id;
+  if (updated) {
+    player.remoteId = updated.id;
+  }
 }
 
-async function joinCurrentSession(name) {
+async function requireAccountReady() {
   if (!remoteReady()) {
-    await askConfirm({
-      title: "Session not ready",
-      message: "The shared session is still loading. Tap Refresh and try again.",
-      action: "OK",
-      notice: true,
-    });
-    return;
+    throw new Error("The shared session is still loading. Tap Refresh and try again.");
   }
 
   if (remote.session.joining_enabled === false) {
-    await askConfirm({
-      title: "Joining is closed",
-      message: "The host has closed player joining for this session.",
-      action: "OK",
-      notice: true,
-    });
-    return;
+    throw new Error("The host has closed player joining for this session.");
+  }
+}
+
+async function createPlayerAccount(username, displayName, pin, confirmPin) {
+  await requireAccountReady();
+  const cleanUsername = normalizeUsernameInput(username);
+  const cleanDisplayName = String(displayName || "").trim();
+
+  if (!cleanUsername || !cleanDisplayName || !pin || !confirmPin) {
+    throw new Error("Fill in every account field.");
+  }
+  if (!isValidPin(pin)) {
+    throw new Error("PIN must be numeric and 4-6 digits.");
+  }
+  if (pin !== confirmPin) {
+    throw new Error("PINs do not match.");
   }
 
-  const points = Number(remote.session.default_player_points ?? 100);
-  const player = {
-    id: uid(),
-    name,
-    points,
-    startingPoints: points,
-    status: "approved",
-    deviceId: deviceKey,
-    adjustments: [],
-  };
-
-  const { data, error } = await remote.client
-    .from("players")
-    .insert({
-      session_id: remote.session.id,
-      client_id: player.id,
-      display_name: player.name,
-      device_id: deviceKey,
-      status: "approved",
-      starting_points: points,
-      points,
-    })
-    .select("*")
-    .single();
+  const { data, error } = await remote.client.rpc("create_player_account", {
+    p_session_id: remote.session.id,
+    p_username: cleanUsername,
+    p_display_name: cleanDisplayName,
+    p_pin: String(pin),
+  });
 
   if (error) {
-    setSyncStatus(`Join error: ${shortError(error)}`, "offline");
-    await askConfirm({
-      title: "Could not join",
-      message: shortError(error),
-      action: "OK",
-      notice: true,
-    });
-    return;
+    throw new Error(error.code === "23505" ? "That username is already taken." : shortError(error));
   }
 
-  player.remoteId = data.id;
-  currentPlayerId = player.id;
-  localStorage.setItem(`oleary-player-id-${deviceKey}`, currentPlayerId);
-  state.players.push(player);
-  render();
+  const player = upsertLocalPlayer(Array.isArray(data) ? data[0] : data);
+  storePlayerSession(player);
+  await loadRemoteState();
+  await showAiDisclaimerOnce();
+}
+
+async function loginPlayerAccount(username, pin) {
+  await requireAccountReady();
+  const cleanUsername = normalizeUsernameInput(username);
+  if (!cleanUsername || !pin) {
+    throw new Error("Enter your username and PIN.");
+  }
+  if (!isValidPin(pin)) {
+    throw new Error("PIN must be numeric and 4-6 digits.");
+  }
+
+  const { data, error } = await remote.client.rpc("login_player_account", {
+    p_username: cleanUsername,
+    p_pin: String(pin),
+  });
+
+  if (error) {
+    throw new Error("Incorrect username or PIN.");
+  }
+
+  const player = upsertLocalPlayer(Array.isArray(data) ? data[0] : data);
+  if (!player) throw new Error("Incorrect username or PIN.");
+  storePlayerSession(player);
   await loadRemoteState();
   await showAiDisclaimerOnce();
 }
@@ -1081,7 +1133,13 @@ async function clearRemoteSession() {
   if (!remoteReady()) return;
   const { error: marketsError } = await remote.client.from("markets").delete().eq("session_id", remote.session.id);
   if (marketsError) throw marketsError;
-  const { error: playersError } = await remote.client.from("players").delete().eq("session_id", remote.session.id);
+  const defaultPoints = Number(remote.session.default_player_points ?? 100);
+  const { error: adjustmentsError } = await remote.client.from("adjustments").delete().eq("session_id", remote.session.id);
+  if (adjustmentsError) throw adjustmentsError;
+  const { error: playersError } = await remote.client
+    .from("players")
+    .update({ starting_points: defaultPoints, points: defaultPoints })
+    .eq("session_id", remote.session.id);
   if (playersError) throw playersError;
 }
 
@@ -1448,6 +1506,7 @@ function getCurrentPlayer() {
 
 function renderPlayerMode() {
   if (appMode !== "player") return;
+  renderPlayerAccountMode();
   const player = getCurrentPlayer();
   if (!player) return;
   renderPlayerProfile(player);
@@ -1455,6 +1514,14 @@ function renderPlayerMode() {
   renderPlayerBets(player);
   renderPlayerAnalytics(player);
   renderPlayerSocial(player);
+}
+
+function renderPlayerAccountMode() {
+  const showCreate = accountFormMode === "create";
+  els.showLoginForm?.classList.toggle("active", !showCreate);
+  els.showCreateAccountForm?.classList.toggle("active", showCreate);
+  if (els.playerLoginForm) els.playerLoginForm.hidden = showCreate;
+  if (els.playerCreateAccountForm) els.playerCreateAccountForm.hidden = !showCreate;
 }
 
 function renderPlayerProfile(player) {
@@ -1479,6 +1546,7 @@ function renderPlayerProfile(player) {
       <span><strong>${money(activity.staked)}</strong> staked</span>
       <span><strong>${money(activity.net)}</strong> net</span>
     </div>
+    <button class="ghost logout-button" type="button" data-player-logout>Logout</button>
     <details class="odds-menu" open>
       <summary>Betting history</summary>
       <div class="activity-list">${activity.rows.length ? activity.rows.join("") : '<div class="empty compact">No bets yet.</div>'}</div>
@@ -2243,30 +2311,12 @@ function getMarketMovements(event, odds = getOdds(event)) {
 
 async function addPlayer(name, points) {
   if (!requireHostMode()) return;
-  if (supabaseConfigured() && !remoteReady()) {
-    await askConfirm({
-      title: "Supabase not ready",
-      message: "The shared session is still connecting. Tap Refresh and try again.",
-      action: "OK",
-      notice: true,
-    });
-    return;
-  }
-
-  const player = { id: uid(), name, points, startingPoints: points, status: "approved", adjustments: [] };
-  state.players.push(player);
-  render();
-  const saved = await runRemote(() => saveRemotePlayer(player));
-  if (supabaseConfigured() && !saved) {
-    state.players = state.players.filter((item) => item.id !== player.id);
-    render();
-    await askConfirm({
-      title: "Player not saved",
-      message: "Supabase rejected the player save. Check the red sync message at the top.",
-      action: "OK",
-      notice: true,
-    });
-  }
+  await askConfirm({
+    title: "Players create accounts now",
+    message: "Ask the player to open player mode, create an account, and they will appear here automatically.",
+    action: "OK",
+    notice: true,
+  });
 }
 
 async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType = "Custom") {
@@ -3144,6 +3194,15 @@ async function removePlayer(playerId) {
   if (!requireHostMode()) return;
   const player = state.players.find((item) => item.id === playerId);
   if (!player) return;
+  if (player.remoteId) {
+    await askConfirm({
+      title: "Account removal disabled",
+      message: "This player has a persistent account. Account removal is disabled for now so nobody loses their login, history, or points by accident.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
 
   const hasLockedBet = state.events.some((event) =>
     event.status !== "open" && event.bets.some((bet) => bet.playerId === playerId)
@@ -3301,6 +3360,7 @@ document.addEventListener("click", (event) => {
   const playerBetButton = event.target.closest("[data-player-bet]");
   const openPlayerMarketButton = event.target.closest("[data-open-player-market]");
   const closePlayerMarketButton = event.target.closest("[data-close-player-market]");
+  const logoutButton = event.target.closest("[data-player-logout]");
 
   if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId, openBet.dataset.betId || null);
   if (closeButton) closeEvent(closeButton.dataset.closeEvent);
@@ -3320,6 +3380,11 @@ document.addEventListener("click", (event) => {
   }
   if (openPlayerMarketButton) openPlayerMarketDetail(openPlayerMarketButton.dataset.openPlayerMarket);
   if (closePlayerMarketButton && els.playerMarketDialog?.open) els.playerMarketDialog.close();
+  if (logoutButton) {
+    clearPlayerSession();
+    if (els.playerMarketDialog?.open) els.playerMarketDialog.close();
+    render();
+  }
   if (removeOutcomeButton) {
     if (!requireHostMode()) return;
     const outcomes = getOutcomeFieldDraftItems();
@@ -3455,19 +3520,58 @@ async function openPlayerBetDialog(eventId, playerId, betId = null) {
   openBetDialog(eventId, playerId, betId);
 }
 
-els.playerJoinForm.addEventListener("submit", async (event) => {
+els.showLoginForm?.addEventListener("click", () => {
+  accountFormMode = "login";
+  setAccountError("");
+  renderPlayerAccountMode();
+});
+
+els.showCreateAccountForm?.addEventListener("click", () => {
+  accountFormMode = "create";
+  setAccountError("");
+  renderPlayerAccountMode();
+});
+
+els.playerLoginForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const name = els.playerJoinName.value.trim();
-  if (!name) return;
-  const submitButton = els.playerJoinForm.querySelector('button[type="submit"]');
-  const originalText = submitButton?.textContent || "Join";
+  setAccountError("");
+  const submitButton = els.playerLoginForm.querySelector('button[type="submit"]');
+  const originalText = submitButton?.textContent || "Login";
   if (submitButton) {
     submitButton.disabled = true;
-    submitButton.textContent = "Joining...";
+    submitButton.textContent = "Logging in...";
     submitButton.classList.add("is-loading");
   }
   try {
-    await joinCurrentSession(name);
+    await loginPlayerAccount(els.loginUsername.value, els.loginPin.value);
+    els.loginPin.value = "";
+  } catch (error) {
+    setAccountError(shortError(error));
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalText;
+      submitButton.classList.remove("is-loading");
+    }
+  }
+});
+
+els.playerCreateAccountForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setAccountError("");
+  const submitButton = els.playerCreateAccountForm.querySelector('button[type="submit"]');
+  const originalText = submitButton?.textContent || "Create Account";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Creating...";
+    submitButton.classList.add("is-loading");
+  }
+  try {
+    await createPlayerAccount(els.createUsername.value, els.createDisplayName.value, els.createPin.value, els.confirmPin.value);
+    els.createPin.value = "";
+    els.confirmPin.value = "";
+  } catch (error) {
+    setAccountError(shortError(error));
   } finally {
     if (submitButton) {
       submitButton.disabled = false;
@@ -3648,10 +3752,16 @@ els.resetNight.addEventListener("click", async () => {
   });
   if (!confirmed) return;
   await runRemote(() => clearRemoteSession());
-  state.players = [];
+  state.players.forEach((player) => {
+    const defaultPoints = Number(remote.session?.default_player_points ?? 100);
+    player.startingPoints = defaultPoints;
+    player.points = defaultPoints;
+    player.adjustments = [];
+  });
   state.events = [];
   state.playerProfiles = Array.isArray(state.playerProfiles) ? state.playerProfiles : cloneDefaultProfiles();
   render();
+  await refreshSharedState({ quiet: true });
 });
 
 els.syncNow.addEventListener("click", refreshSharedState);

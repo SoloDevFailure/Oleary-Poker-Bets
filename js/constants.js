@@ -2,6 +2,7 @@ const STORAGE_KEY = "poker-night-bets-v1";
 const TAX_RATE = 0.1;
 const PLAYER_MARKETS_REFRESH_MS = 10000;
 const DEFAULT_SEED_POOL = 300;
+const PLAYER_ACCOUNT_SESSION_KEY = "oleary-player-account-session-v1";
 const MARKET_TYPES = ["Winner", "TopThree", "TopThreeCombo", "BottomThreeCombo", "FirstOut", "LastLonger", "Knockout", "Chaos", "Custom"];
 const FIXED_ODDS_MARKET_TYPES = ["Winner", "FirstOut", "Knockout", "LastLonger"];
 const PROFILE_STATS = ["skill", "survivability", "volatility", "consistency", "recentForm", "aggression"];
