@@ -263,3 +263,5 @@ const PokerAvatar = (() => {
     cardName,
   };
 })();
+
+window.PokerAvatar = PokerAvatar;

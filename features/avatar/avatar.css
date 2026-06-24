@@ -9,6 +9,7 @@
 }
 
 .avatar-layer:not([hidden]) {
+  animation: avatar-backdrop-in 180ms ease-out;
   display: flex;
 }
 
@@ -17,6 +18,7 @@
 }
 
 .avatar-editor {
+  animation: avatar-panel-in 220ms ease-out;
   background:
     radial-gradient(circle at top, rgba(24, 157, 255, 0.14), transparent 42%),
     #17191e;
@@ -32,6 +34,29 @@
   padding: 1rem;
   position: relative;
   width: min(100%, 430px);
+}
+
+@keyframes avatar-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes avatar-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-layer:not([hidden]),
+  .avatar-editor {
+    animation: none;
+  }
 }
 
 .avatar-close {
