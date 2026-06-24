@@ -143,11 +143,11 @@ const PokerAvatar = (() => {
     `;
   }
 
-  function renderPicker(config, key, draftCard, error = "") {
+  function renderPicker(config, key, draftCard, error = "", animate = true) {
     const selectedSuit = draftCard.suit || "spades";
     const selectedRank = draftCard.rank || "A";
     root.innerHTML = `
-      <div class="avatar-editor avatar-picker">
+      <div class="avatar-editor avatar-picker ${animate ? "" : "avatar-no-enter"}">
         <button class="avatar-close" type="button" data-avatar-back aria-label="Back to avatar editor">×</button>
         <div class="avatar-editor-heading">
           <p class="eyebrow">${key === "card1" ? "Select Card One" : "Select Card Two"}</p>
@@ -223,16 +223,16 @@ const PokerAvatar = (() => {
         if (selector) showPicker(selector.dataset.avatarSelect);
         if (rankButton && pickerDraft) {
           pickerDraft.rank = rankButton.dataset.avatarRank;
-          renderPicker(config, picker, pickerDraft);
+          renderPicker(config, picker, pickerDraft, "", false);
         }
         if (suitButton && pickerDraft) {
           pickerDraft.suit = suitButton.dataset.avatarSuit;
-          renderPicker(config, picker, pickerDraft);
+          renderPicker(config, picker, pickerDraft, "", false);
         }
         if (okButton && picker) {
           const otherKey = picker === "card1" ? "card2" : "card1";
           if (isDuplicate(pickerDraft, config[otherKey])) {
-            renderPicker(config, picker, pickerDraft, `Cannot select the same card as ${otherKey === "card1" ? "Card One" : "Card Two"}.`);
+            renderPicker(config, picker, pickerDraft, `Cannot select the same card as ${otherKey === "card1" ? "Card One" : "Card Two"}.`, false);
             return;
           }
           config[picker] = { ...pickerDraft };

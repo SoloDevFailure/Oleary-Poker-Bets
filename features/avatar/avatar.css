@@ -36,6 +36,10 @@
   width: min(100%, 430px);
 }
 
+.avatar-editor.avatar-no-enter {
+  animation: none;
+}
+
 @keyframes avatar-backdrop-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -105,16 +109,15 @@
   border: 2px solid #189dff;
   border-radius: 50%;
   display: inline-flex;
-  height: 4.15rem;
+  height: var(--avatar-size, 4.15rem);
   justify-content: center;
   overflow: hidden;
   position: relative;
-  width: 4.15rem;
+  width: var(--avatar-size, 4.15rem);
 }
 
 .avatar-preview-wrap .avatar-chip {
-  height: 8.6rem;
-  width: 8.6rem;
+  --avatar-size: 8.6rem;
 }
 
 .avatar-placeholder span {
@@ -133,50 +136,36 @@
   align-items: center;
   background: linear-gradient(145deg, #fffaf0, #d8d1c3);
   border: 1px solid rgba(255, 255, 255, 0.65);
-  border-radius: 0.38rem;
+  border-radius: calc(var(--avatar-size, 4.15rem) * 0.075);
   box-shadow: 0 0.45rem 0.7rem rgba(0, 0, 0, 0.32);
   color: #11151b;
   display: grid;
-  height: 2.65rem;
+  height: calc(var(--avatar-size, 4.15rem) * 0.56);
   justify-items: center;
   line-height: 1;
   position: absolute;
-  width: 1.9rem;
-}
-
-.avatar-preview-wrap .avatar-card {
-  border-radius: 0.65rem;
-  height: 5.2rem;
-  width: 3.75rem;
+  width: calc(var(--avatar-size, 4.15rem) * 0.39);
 }
 
 .avatar-card-left {
-  transform: translateX(-0.62rem) rotate(-10deg);
+  transform: translateX(-28%) rotate(-10deg);
 }
 
 .avatar-card-right {
-  transform: translateX(0.62rem) rotate(10deg);
+  transform: translateX(28%) rotate(10deg);
 }
 
 .avatar-card-rank {
   align-self: end;
-  font-size: 0.95rem;
+  font-size: calc(var(--avatar-size, 4.15rem) * 0.23);
   font-weight: 950;
 }
 
 .avatar-card-suit {
   align-self: start;
   color: var(--card-suit);
-  font-size: 1.28rem;
+  font-size: calc(var(--avatar-size, 4.15rem) * 0.31);
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
-}
-
-.avatar-preview-wrap .avatar-card-rank {
-  font-size: 1.55rem;
-}
-
-.avatar-preview-wrap .avatar-card-suit {
-  font-size: 2.5rem;
 }
 
 .avatar-selector-list {
@@ -324,26 +313,5 @@
 .player-row .avatar-chip,
 .social-row .avatar-chip,
 .leaderboard-row .avatar-chip {
-  height: 2.4rem;
-  width: 2.4rem;
-}
-
-.player-row .avatar-card,
-.social-row .avatar-card,
-.leaderboard-row .avatar-card {
-  border-radius: 0.24rem;
-  height: 1.55rem;
-  width: 1.1rem;
-}
-
-.player-row .avatar-card-rank,
-.social-row .avatar-card-rank,
-.leaderboard-row .avatar-card-rank {
-  font-size: 0.58rem;
-}
-
-.player-row .avatar-card-suit,
-.social-row .avatar-card-suit,
-.leaderboard-row .avatar-card-suit {
-  font-size: 0.82rem;
+  --avatar-size: 2.4rem;
 }

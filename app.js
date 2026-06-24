@@ -926,7 +926,9 @@ async function createPlayerAccount(username, displayName, pin, confirmPin) {
   storePlayerSession(player);
   await loadRemoteState();
   await showAiDisclaimerOnce();
-  await openAvatarCreator(getCurrentPlayer(), { quiet: true });
+  const avatarPlayer = getCurrentPlayer() || state.players.find((item) => item.id === player?.id || item.remoteId === player?.remoteId) || player;
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  await openAvatarCreator(avatarPlayer, { quiet: true });
 }
 
 async function loginPlayerAccount(username, pin) {
