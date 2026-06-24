@@ -54,13 +54,10 @@ if ("serviceWorker" in navigator) {
 }
 
 const els = {
-  playerForm: document.querySelector("#playerForm"),
   sessionForm: document.querySelector("#sessionForm"),
   sessionTitle: document.querySelector("#sessionTitle"),
   defaultPlayerPoints: document.querySelector("#defaultPlayerPoints"),
   joiningEnabled: document.querySelector("#joiningEnabled"),
-  playerName: document.querySelector("#playerName"),
-  startingPoints: document.querySelector("#startingPoints"),
   playersList: document.querySelector("#playersList"),
   eventForm: document.querySelector("#eventForm"),
   eventName: document.querySelector("#eventName"),
@@ -74,7 +71,6 @@ const els = {
   bonusFields: document.querySelector("#bonusFields"),
   bonusLabel: document.querySelector("#bonusLabel"),
   bonusPoints: document.querySelector("#bonusPoints"),
-  addPlayerButton: document.querySelector("#playerForm button[type='submit']"),
   addEventButton: document.querySelector("#eventForm button[type='submit']"),
   eventsList: document.querySelector("#eventsList"),
   exportData: document.querySelector("#exportData"),
@@ -133,6 +129,7 @@ const els = {
   giveAllDialog: document.querySelector("#giveAllDialog"),
   giveAllPointsValue: document.querySelector("#giveAllPointsValue"),
   closeAllBetting: document.querySelector("#closeAllBetting"),
+  resetAccounts: document.querySelector("#resetAccounts"),
   syncStatus: document.querySelector("#syncStatus"),
   syncNow: document.querySelector("#syncNow"),
   confirmDialog: document.querySelector("#confirmDialog"),
@@ -183,7 +180,6 @@ function setSyncStatus(text, mode) {
   els.syncStatus.classList.toggle("online", mode === "online");
   els.syncStatus.classList.toggle("offline", mode === "offline");
   const waitingForSupabase = supabaseConfigured() && !remote.enabled && text !== "Local host mode";
-  els.addPlayerButton.disabled = waitingForSupabase;
   els.addEventButton.disabled = waitingForSupabase;
 }
 
@@ -223,7 +219,7 @@ async function initSupabaseConnection() {
         .insert({
           title: "Oleary Poker Session",
           join_code: joinCode,
-          default_player_points: Number(els.startingPoints.value) || 100,
+          default_player_points: Number(els.defaultPlayerPoints.value) || 100,
           joining_enabled: true,
         })
         .select("*")
@@ -236,7 +232,6 @@ async function initSupabaseConnection() {
     remote.enabled = true;
     els.sessionTitle.value = remote.session.title || "";
     els.defaultPlayerPoints.value = Number(remote.session.default_player_points ?? 100);
-    els.startingPoints.value = Number(remote.session.default_player_points ?? 100);
     els.joiningEnabled.checked = remote.session.joining_enabled !== false;
     setSyncStatus(`Supabase connected · Session ${remote.session.join_code}`, "online");
     await loadRemoteState();
@@ -974,7 +969,6 @@ async function saveRemoteSessionSettings(settings) {
     .single();
   if (error) throw error;
   remote.session = data;
-  els.startingPoints.value = Number(remote.session.default_player_points ?? 100);
 }
 
 async function ensureRemoteOutcome(event, label) {
@@ -1197,6 +1191,34 @@ async function clearRemoteSession() {
     .update({ starting_points: defaultPoints, points: defaultPoints })
     .eq("session_id", remote.session.id);
   if (playersError) throw playersError;
+}
+
+async function resetPersistentAccounts() {
+  if (!requireHostMode()) return;
+  const confirmed = await askConfirm({
+    title: "Reset player accounts?",
+    message: "Delete all player accounts, avatars, bets, payouts, and point adjustments for this session? Markets and profile ratings will stay in place for testing.",
+    action: "Reset accounts",
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  if (remoteReady()) {
+    const removed = await runRemote(async () => {
+      const { error } = await remote.client.from("players").delete().eq("session_id", remote.session.id);
+      if (error) throw error;
+    });
+    if (!removed) return;
+  }
+
+  state.players = [];
+  state.events.forEach((event) => {
+    event.bets = [];
+    event.payouts = [];
+  });
+  clearPlayerSession();
+  render();
+  await refreshSharedState({ quiet: true });
 }
 
 async function pushStateToRemote() {
@@ -1453,7 +1475,7 @@ function renderPlayers() {
   const leaderPoints = players[0]?.points;
 
   if (players.length === 0) {
-    els.playersList.innerHTML = '<div class="empty">Add players to start the session.</div>';
+    els.playersList.innerHTML = '<div class="empty">Players will appear here after they create accounts.</div>';
     return;
   }
 
@@ -2375,16 +2397,6 @@ function getMarketMovements(event, odds = getOdds(event)) {
     .filter((item) => item.strength > 0.02)
     .sort((a, b) => b.strength - a.strength)
     .slice(0, 3);
-}
-
-async function addPlayer(name, points) {
-  if (!requireHostMode()) return;
-  await askConfirm({
-    title: "Players create accounts now",
-    message: "Ask the player to open player mode, create an account, and they will appear here automatically.",
-    action: "OK",
-    notice: true,
-  });
 }
 
 async function addEvent(name, outcomeItems = [], bonus = {}, profileMarketType = "Custom") {
@@ -3322,18 +3334,6 @@ async function removeEvent(eventId) {
   render();
 }
 
-els.playerForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const name = els.playerName.value.trim();
-  const points = Math.floor(Number(els.startingPoints.value));
-  if (!name || points <= 0) return;
-  const beforeCount = state.players.length;
-  await addPlayer(name, points);
-  if (state.players.length === beforeCount) return;
-  els.playerName.value = "";
-  els.playerName.focus();
-});
-
 els.sessionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!requireHostMode()) return;
@@ -3762,6 +3762,7 @@ els.bonusEnabled.addEventListener("change", () => {
 });
 
 els.closeAllBetting.addEventListener("click", closeAllBetting);
+els.resetAccounts?.addEventListener("click", resetPersistentAccounts);
 els.showPlayerQr?.addEventListener("click", showPlayerQrCode);
 els.giveAllPoints?.addEventListener("click", openGiveAllPointsDialog);
 els.giveAllDialog?.addEventListener("close", () => {
@@ -3843,9 +3844,6 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => {
     activeTab = button.dataset.tab;
     localStorage.setItem("poker-night-bets-active-tab", activeTab);
-    if (activeTab === "players") {
-      els.startingPoints.value = Number(remote.session?.default_player_points ?? els.defaultPlayerPoints.value ?? 100);
-    }
     renderTabs();
   });
 });

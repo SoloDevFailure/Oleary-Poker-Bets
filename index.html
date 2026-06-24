@@ -168,6 +168,7 @@
             <button id="showPlayerQr" class="ghost" type="button">Show QR code</button>
             <button id="giveAllPoints" class="ghost" type="button">Give points to all players</button>
             <button id="closeAllBetting" type="button">Close all betting</button>
+            <button id="resetAccounts" class="danger" type="button">Reset player accounts</button>
           </div>
           <p class="muted session-note">Player mode will use these settings when people join the session.</p>
         </section>
@@ -179,12 +180,6 @@
               <p>Scores sort highest first, then alphabetically.</p>
             </div>
           </div>
-
-          <form id="playerForm" class="inline-form">
-            <input id="playerName" type="text" placeholder="Player name" autocomplete="off" />
-            <input id="startingPoints" type="number" min="1" step="1" value="100" aria-label="Starting points" />
-            <button type="submit">Add</button>
-          </form>
 
           <div id="playersList" class="players-list"></div>
         </section>
