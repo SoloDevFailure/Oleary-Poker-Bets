@@ -160,17 +160,22 @@ const els = {
   winProfit: document.querySelector("[data-win-profit]"),
   winBalanceRow: document.querySelector("[data-win-balance-row]"),
   winBalance: document.querySelector("[data-win-balance]"),
+  avatarLayer: document.querySelector("#avatarLayer"),
 };
 
 function setSyncStatus(text, mode) {
-  if (appMode === "player" && mode === "online") {
-    const sessionCode = text.match(/Session\s+(.+)$/)?.[1] || "OLEARY";
+  if (appMode === "player" && (mode === "online" || text === "Refreshing..." || text === "Connecting...")) {
+    const sessionCode = text.match(/Session\s+(.+)$/)?.[1] || remote.session?.join_code || "OLEARY";
     const primary = document.createElement("span");
     const secondary = document.createElement("span");
     primary.className = "sync-primary";
     primary.textContent = `Session ${sessionCode}`;
     secondary.className = "sync-secondary";
-    secondary.textContent = text.includes("connected") ? "Supabase connected" : "Supabase synced";
+    secondary.textContent = text === "Refreshing..."
+      ? "Refreshing"
+      : text === "Connecting..."
+        ? "Connecting"
+        : text.includes("connected") ? "Supabase connected" : "Supabase synced";
     els.syncStatus.replaceChildren(primary, secondary);
   } else {
     els.syncStatus.textContent = text;
@@ -185,6 +190,10 @@ function setSyncStatus(text, mode) {
 function supabaseConfigured() {
   const config = window.OLEARY_SUPABASE;
   return Boolean(config?.url && config?.anonKey && window.supabase);
+}
+
+if (window.PokerAvatar && els.avatarLayer) {
+  PokerAvatar.mount(els.avatarLayer);
 }
 
 async function initSupabaseConnection() {
@@ -577,15 +586,17 @@ async function loadRemoteState() {
   if (!remoteReady()) return;
 
   const sessionId = remote.session.id;
-  const [{ data: players, error: playersError }, { data: markets, error: marketsError }, { data: adjustments, error: adjustmentsError }] = await Promise.all([
+  const [{ data: players, error: playersError }, { data: markets, error: marketsError }, { data: adjustments, error: adjustmentsError }, { data: avatarRows, error: avatarError }] = await Promise.all([
     remote.client.from("players").select("id,client_id,session_id,username,display_name,device_id,status,starting_points,points,created_at,updated_at,last_login_at,profile_image_url,profile_banner_url,profile_customization,badges,achievements,title").eq("session_id", sessionId).order("created_at", { ascending: true }),
     remote.client.from("markets").select("*").eq("session_id", sessionId).order("created_at", { ascending: false }),
     remote.client.from("adjustments").select("*").eq("session_id", sessionId).order("created_at", { ascending: true }),
+    remote.client.from("player_avatar_configs").select("*"),
   ]);
 
   if (playersError) throw playersError;
   if (marketsError) throw marketsError;
   if (adjustmentsError) throw adjustmentsError;
+  if (avatarError) throw avatarError;
 
   const marketIds = (markets || []).map((market) => market.id);
   const remoteOutcomes = marketIds.length
@@ -603,10 +614,13 @@ async function loadRemoteState() {
   if (remotePayouts.error) throw remotePayouts.error;
 
   const playerIdByRemoteId = new Map();
+  const avatarsByPlayerId = new Map((avatarRows || []).map((row) => [row.player_id, PokerAvatar.fromRow(row)]));
   state.players = (players || []).map((player) => {
     const localId = player.id;
     playerIdByRemoteId.set(player.id, localId);
-    return mapRemotePlayer(player, (adjustments || []).filter((adjustment) => adjustment.player_id === player.id));
+    const mapped = mapRemotePlayer(player, (adjustments || []).filter((adjustment) => adjustment.player_id === player.id));
+    mapped.avatarConfig = avatarsByPlayerId.get(player.id) || null;
+    return mapped;
   });
 
   const outcomesById = new Map((remoteOutcomes.data || []).map((outcome) => [outcome.id, outcome]));
@@ -836,6 +850,47 @@ async function saveRemotePlayer(player) {
   }
 }
 
+async function saveRemoteAvatarConfig(player, config) {
+  if (!remoteReady() || !player?.remoteId || !window.PokerAvatar) return;
+  const row = PokerAvatar.toRow(config);
+  if (!row) throw new Error("Choose two valid cards before saving your avatar.");
+  const { error } = await remote.client
+    .from("player_avatar_configs")
+    .upsert({
+      player_id: player.remoteId,
+      ...row,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "player_id" });
+  if (error) throw error;
+  player.avatarConfig = config;
+}
+
+async function openAvatarCreator(player, options = {}) {
+  if (!player || !window.PokerAvatar) return;
+  const config = await PokerAvatar.open({ config: player.avatarConfig });
+  if (!config) return;
+  player.avatarConfig = config;
+  render();
+  const saved = await runRemote(() => saveRemoteAvatarConfig(player, config));
+  if (!saved) {
+    await askConfirm({
+      title: "Avatar not saved",
+      message: "The avatar preview updated locally, but Supabase rejected the save. Try again after refreshing.",
+      action: "OK",
+      notice: true,
+    });
+    return;
+  }
+  if (!options.quiet) {
+    await askConfirm({
+      title: "Avatar saved",
+      message: "Your poker card avatar is ready.",
+      action: "OK",
+      notice: true,
+    });
+  }
+}
+
 async function requireAccountReady() {
   if (!remoteReady()) {
     throw new Error("The shared session is still loading. Tap Refresh and try again.");
@@ -876,6 +931,7 @@ async function createPlayerAccount(username, displayName, pin, confirmPin) {
   storePlayerSession(player);
   await loadRemoteState();
   await showAiDisclaimerOnce();
+  await openAvatarCreator(getCurrentPlayer(), { quiet: true });
 }
 
 async function loginPlayerAccount(username, pin) {
@@ -1410,6 +1466,7 @@ function renderPlayers() {
     return `
       <article class="player-row ${isExpanded ? "expanded" : ""}">
         <div class="player-main">
+          ${renderPlayerAvatar(player)}
           <div>
             <button class="player-name-button" data-toggle-player="${player.id}">
               <span>${escapeHtml(player.name)}</span>
@@ -1504,6 +1561,12 @@ function getCurrentPlayer() {
   return state.players.find((player) => player.id === currentPlayerId || player.remoteId === currentPlayerId) || null;
 }
 
+function renderPlayerAvatar(player) {
+  return window.PokerAvatar
+    ? PokerAvatar.render(player?.avatarConfig, { initial: player?.name || "?" })
+    : `<span class="avatar-chip avatar-placeholder"><span>${escapeHtml(String(player?.name || "?").charAt(0).toUpperCase())}</span></span>`;
+}
+
 function renderPlayerMode() {
   if (appMode !== "player") return;
   renderPlayerAccountMode();
@@ -1530,10 +1593,14 @@ function renderPlayerProfile(player) {
   const activity = getPlayerActivity(player.id);
 
   els.playerProfile.innerHTML = `
-    <div class="section-header">
+    <div class="section-header player-profile-card">
+      ${renderPlayerAvatar(player)}
       <div>
         <h2>${escapeHtml(player.name)}</h2>
         <p>Your profile for ${escapeHtml(remote.session?.title || "this session")}.</p>
+      </div>
+      <div class="avatar-profile-actions">
+        <button class="ghost" type="button" data-edit-avatar="${player.id}">${player.avatarConfig ? "Edit Avatar" : "Create Avatar"}</button>
       </div>
     </div>
     <div class="activity-summary">
@@ -1770,7 +1837,7 @@ function renderPlayerAnalytics(player) {
       ${leaderboard.map((item, index) => `
         <div class="leaderboard-row ${item.id === player.id ? "current" : ""}">
           <span class="leaderboard-rank">${index + 1}</span>
-          <span class="leaderboard-avatar">${escapeHtml(item.name.charAt(0).toUpperCase())}</span>
+          ${renderPlayerAvatar(item)}
           <strong>${escapeHtml(item.name)}</strong>
           <span>${money(item.points)}</span>
         </div>
@@ -1831,6 +1898,7 @@ function renderSocialFeed(target, currentPlayer = null) {
         const reserved = getReservedByPlayer(item.id);
         return `
           <div class="social-row">
+            ${renderPlayerAvatar(item)}
             <div>
               <div class="social-name-line">
                 <strong>${escapeHtml(item.name)}${currentPlayer && item.id === currentPlayer.id ? " (you)" : ""}</strong>
@@ -3361,6 +3429,7 @@ document.addEventListener("click", (event) => {
   const openPlayerMarketButton = event.target.closest("[data-open-player-market]");
   const closePlayerMarketButton = event.target.closest("[data-close-player-market]");
   const logoutButton = event.target.closest("[data-player-logout]");
+  const editAvatarButton = event.target.closest("[data-edit-avatar]");
 
   if (openBet) openBetDialog(openBet.dataset.openBet, openBet.dataset.playerId, openBet.dataset.betId || null);
   if (closeButton) closeEvent(closeButton.dataset.closeEvent);
@@ -3380,6 +3449,10 @@ document.addEventListener("click", (event) => {
   }
   if (openPlayerMarketButton) openPlayerMarketDetail(openPlayerMarketButton.dataset.openPlayerMarket);
   if (closePlayerMarketButton && els.playerMarketDialog?.open) els.playerMarketDialog.close();
+  if (editAvatarButton) {
+    const player = getCurrentPlayer();
+    if (player && player.id === editAvatarButton.dataset.editAvatar) openAvatarCreator(player);
+  }
   if (logoutButton) {
     clearPlayerSession();
     if (els.playerMarketDialog?.open) els.playerMarketDialog.close();

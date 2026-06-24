@@ -203,6 +203,20 @@ create table if not exists public.payouts (
 create unique index if not exists payouts_one_per_player_market
   on public.payouts(market_id, player_id);
 
+create table if not exists public.player_avatar_configs (
+  player_id uuid primary key references public.players(id) on delete cascade,
+  card_1_rank text not null check (card_1_rank in ('A','K','Q','J','T','9','8','7','6','5','4','3','2')),
+  card_1_suit text not null check (card_1_suit in ('spades','hearts','diamonds','clubs')),
+  card_2_rank text not null check (card_2_rank in ('A','K','Q','J','T','9','8','7','6','5','4','3','2')),
+  card_2_suit text not null check (card_2_suit in ('spades','hearts','diamonds','clubs')),
+  avatar_image_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint player_avatar_configs_two_real_cards check (
+    card_1_rank <> card_2_rank or card_1_suit <> card_2_suit
+  )
+);
+
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
@@ -226,6 +240,11 @@ for each row execute function public.touch_updated_at();
 drop trigger if exists bets_touch_updated_at on public.bets;
 create trigger bets_touch_updated_at
 before update on public.bets
+for each row execute function public.touch_updated_at();
+
+drop trigger if exists player_avatar_configs_touch_updated_at on public.player_avatar_configs;
+create trigger player_avatar_configs_touch_updated_at
+before update on public.player_avatar_configs
 for each row execute function public.touch_updated_at();
 
 -- Account PIN security:
@@ -256,7 +275,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   normalized_username text := lower(trim(p_username));
@@ -298,7 +317,7 @@ begin
     p_session_id,
     normalized_username,
     clean_display_name,
-    crypt(p_pin, gen_salt('bf')),
+    extensions.crypt(p_pin, extensions.gen_salt('bf')),
     'approved',
     initial_points,
     initial_points,
@@ -344,7 +363,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   if lower(trim(p_username)) = '' or p_pin !~ '^[0-9]{4,6}$' then
@@ -355,7 +374,7 @@ begin
   update public.players
   set last_login_at = now()
   where lower(players.username) = lower(trim(p_username))
-    and players.pin_hash = crypt(p_pin, players.pin_hash)
+    and players.pin_hash = extensions.crypt(p_pin, players.pin_hash)
   returning
     players.id,
     players.username,
@@ -387,6 +406,7 @@ alter table public.outcomes enable row level security;
 alter table public.bets enable row level security;
 alter table public.adjustments enable row level security;
 alter table public.payouts enable row level security;
+alter table public.player_avatar_configs enable row level security;
 
 drop policy if exists "prototype read sessions" on public.sessions;
 create policy "prototype read sessions" on public.sessions for select using (true);
@@ -422,3 +442,8 @@ drop policy if exists "prototype read payouts" on public.payouts;
 create policy "prototype read payouts" on public.payouts for select using (true);
 drop policy if exists "prototype write payouts" on public.payouts;
 create policy "prototype write payouts" on public.payouts for all using (true) with check (true);
+
+drop policy if exists "prototype read player avatars" on public.player_avatar_configs;
+create policy "prototype read player avatars" on public.player_avatar_configs for select using (true);
+drop policy if exists "prototype write player avatars" on public.player_avatar_configs;
+create policy "prototype write player avatars" on public.player_avatar_configs for all using (true) with check (true);

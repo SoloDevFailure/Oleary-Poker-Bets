@@ -335,7 +335,7 @@ h3 {
 
 .social-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 1rem;
   align-items: start;
   border-bottom: 1px solid var(--line);
@@ -541,7 +541,8 @@ h3 {
 
 .player-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: 0.75rem;
 }
 
@@ -1386,6 +1387,8 @@ html[data-mode="player"] .sync-status {
   gap: 0.18rem;
   line-height: 1.15;
   max-width: none;
+  min-height: 3.15rem;
+  min-width: 8.6rem;
   padding: 0.55rem 0.7rem;
   text-align: left;
 }
@@ -2295,11 +2298,14 @@ html[data-mode="player"] .win-amount {
   }
 
   html[data-mode="player"] .sync-status {
+    display: grid;
     justify-self: auto;
     max-width: none;
+    min-height: 3.15rem;
+    min-width: 8.6rem;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   html[data-mode="player"] .section-header {

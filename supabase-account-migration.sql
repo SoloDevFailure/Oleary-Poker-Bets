@@ -28,6 +28,27 @@ alter table public.players
   alter column username set not null,
   alter column pin_hash set not null;
 
+create table if not exists public.player_avatar_configs (
+  player_id uuid primary key references public.players(id) on delete cascade,
+  card_1_rank text not null check (card_1_rank in ('A','K','Q','J','T','9','8','7','6','5','4','3','2')),
+  card_1_suit text not null check (card_1_suit in ('spades','hearts','diamonds','clubs')),
+  card_2_rank text not null check (card_2_rank in ('A','K','Q','J','T','9','8','7','6','5','4','3','2')),
+  card_2_suit text not null check (card_2_suit in ('spades','hearts','diamonds','clubs')),
+  avatar_image_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint player_avatar_configs_two_real_cards check (
+    card_1_rank <> card_2_rank or card_1_suit <> card_2_suit
+  )
+);
+
+alter table public.player_avatar_configs enable row level security;
+
+drop policy if exists "prototype read player avatars" on public.player_avatar_configs;
+create policy "prototype read player avatars" on public.player_avatar_configs for select using (true);
+drop policy if exists "prototype write player avatars" on public.player_avatar_configs;
+create policy "prototype write player avatars" on public.player_avatar_configs for all using (true) with check (true);
+
 -- Account PIN security:
 -- The browser sends the PIN to these Supabase functions over HTTPS.
 -- Supabase stores only a pgcrypto crypt() hash in players.pin_hash.
@@ -56,7 +77,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   normalized_username text := lower(trim(p_username));
@@ -98,7 +119,7 @@ begin
     p_session_id,
     normalized_username,
     clean_display_name,
-    crypt(p_pin, gen_salt('bf')),
+    extensions.crypt(p_pin, extensions.gen_salt('bf')),
     'approved',
     initial_points,
     initial_points,
@@ -144,7 +165,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   if lower(trim(p_username)) = '' or p_pin !~ '^[0-9]{4,6}$' then
@@ -155,7 +176,7 @@ begin
   update public.players
   set last_login_at = now()
   where lower(players.username) = lower(trim(p_username))
-    and players.pin_hash = crypt(p_pin, players.pin_hash)
+    and players.pin_hash = extensions.crypt(p_pin, players.pin_hash)
   returning
     players.id,
     players.username,
